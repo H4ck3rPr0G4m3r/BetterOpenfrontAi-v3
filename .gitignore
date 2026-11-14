@@ -1,0 +1,19 @@
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+dist/
+out/
+
+# Built engine bundles per gitCommit (docs/superpowers/specs/2026-11-14-v3-design.md §7)
+engines/
+
+# Crawled records, index, training outputs
+data/
+runs/
+checkpoints/
+replays/
+
+*.cpuprofile
+*.heapprofile
+*.heapsnapshot
