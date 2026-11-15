@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS players (
   source TEXT,
   updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS queue (
+  game_id TEXT PRIMARY KEY,
+  source TEXT,
+  queued_at TEXT
+);
 CREATE TABLE IF NOT EXISTS cursors (
   public_id TEXT PRIMARY KEY,
   cursor TEXT,
@@ -127,6 +132,9 @@ class Index:
             except Exception:
                 self._db.execute("ROLLBACK")
                 raise
+
+    def count_games(self) -> int:
+        return self._q("SELECT count(*) FROM games")[0][0]
 
     def has_game(self, game_id: str) -> bool:
         return bool(self._q("SELECT 1 FROM games WHERE id = ?", (game_id,)))
@@ -228,6 +236,24 @@ class Index:
                  updated_at=excluded.updated_at""",
             (public_id, cursor, done_before, _now_iso()),
         )
+
+    # -- fetch queue (survives a killed crawl) ---------------------------------
+
+    def queue_add(self, game_id: str, source: str) -> bool:
+        with self._lock:
+            cur = self._db.execute(
+                "INSERT OR IGNORE INTO queue(game_id, source, queued_at) VALUES (?, ?, ?)", (game_id, source, _now_iso())
+            )
+            return cur.rowcount > 0
+
+    def queue_list(self, limit: int = 1_000_000) -> list[str]:
+        return [r[0] for r in self._q("SELECT game_id FROM queue ORDER BY queued_at, game_id LIMIT ?", (limit,))]
+
+    def queue_remove(self, game_id: str) -> None:
+        self._q("DELETE FROM queue WHERE game_id = ?", (game_id,))
+
+    def queue_size(self) -> int:
+        return self._q("SELECT count(*) FROM queue")[0][0]
 
     # -- version window ------------------------------------------------------
 

@@ -92,6 +92,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--games", type=int, default=30)
     p.add_argument("--player", action="append", default=[], help="public ID to use instead of the leaderboard")
 
+    p = sub.add_parser("crawl", help="crawl teacher games into data/records and the index")
+    p.add_argument("--teachers", type=int, default=200)
+    p.add_argument("--days", type=int, default=21)
+    p.add_argument("--target", type=int, default=2000)
+    p.add_argument("--player", action="append", default=[], help="seed teacher public ID (skips the leaderboard)")
+
     p = sub.add_parser("build-engine", help="build the sim bundle for one engine commit")
     p.add_argument("commit")
     p.add_argument("--force", action="store_true")
@@ -108,6 +114,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             summary = fetch_sample(api, players=args.players, games=args.games, seed_players=args.player)
         _print(summary)
         return 1 if summary["error"] else 0
+
+    if args.command == "crawl":
+        from ofai.data.crawl import CrawlConfig, Crawler
+        from ofai.data.index import Index
+
+        cfg = CrawlConfig(teachers=args.teachers, days=args.days, target_games=args.target, seed_players=args.player)
+        with OpenFrontApi() as api:
+            result = Crawler(api, Index(), cfg, progress=lambda p: print(json.dumps(p), file=sys.stderr)).run()
+        _print(result)
+        return 1 if result["phase"] == "error" else 0
 
     if args.command == "build-engine":
         from ofai.engines import ensure_bundle
