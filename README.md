@@ -4,7 +4,9 @@ An AI for [OpenFront](https://openfront.io) that learns from strong human
 players' public games first, then improves through self-play. The goal is
 an AI that holds its own against skilled people in public FFA lobbies.
 
-**Status:** planned, not built yet. The design lives in
+**Status:** M0 built (engine submodule, per-commit bundles, record replayer, replay-check); its exit check waits on
+real game records, which the OpenFront API currently serves only behind a Cloudflare challenge (see
+[docs/measurements.md](docs/measurements.md)). The design lives in
 [docs/superpowers/specs/2026-11-14-v3-design.md](docs/superpowers/specs/2026-11-14-v3-design.md),
 and the step-by-step build plan, one file per milestone, starts at
 [docs/superpowers/plans/2026-11-15-v3-00-roadmap.md](docs/superpowers/plans/2026-11-15-v3-00-roadmap.md).

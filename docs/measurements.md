@@ -45,3 +45,28 @@ change between commits; the selfcheck would catch a map that did).
 Upstream's own sample record (`engine/records/demoGame1.json`, Pangaea, 30 bots, default nations) can't serve as a
 real-record check: its `gitCommit` `4444c9c…` is a placeholder (`not our ref` upstream). On the pin it diverges at
 turn 210, as expected for a record from another version.
+
+## M0 — replay-check, pipeline run on synthetic records (2026-11-15)
+
+The M0 exit check (20 fresh public FFA records) is **blocked** by the API challenge above. To exercise the whole
+pipeline meanwhile, `sim.mjs synth` wrote 6 engine-run games (5 min of game time = 3,000 turns, default nations,
+400 bots, 4–8 seats spawning and attacking) on the pin, and `python -m ofai replay-check --jobs 6` replayed them
+through the built bundle:
+
+| Map | Size | Replay ticks/s (6 processes in parallel) |
+|---|---|---|
+| Onion | 512×512 | 712 |
+| Pangaea | 1000×1000 | 499 |
+| World | 2000×1000 | 376 |
+| Australia | — | 329 |
+| Sol (largest in rotation) | 4432×2528 | 356 |
+| Las Vegas Strip (portrait) | 2036×4428 | 291 |
+
+Result: 6/6 ok, 300 hash checks each, 0 mismatches, 0 errors.
+
+**What this does and doesn't prove.** Generation and replay share our adapter, so this proves determinism of our
+construction across processes and the whole fetch → bundle → replay → report pipeline. It does *not* prove that our
+game construction matches the real servers'; only real records can (construction mirrors the engine's own
+`createGameRunner` and `tests/replay/ReplayGame.ts` at the pin line for line, including `toWireGameStartInfo`).
+Ticks/s include process start and the engine's per-turn intent validation; they cover the first 5 minutes only
+(late games with more units are slower; M2 Task 12 measures that).

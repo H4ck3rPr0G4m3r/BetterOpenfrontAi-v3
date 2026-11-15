@@ -6,14 +6,14 @@
 import fs from "fs";
 import path from "path";
 import { quietEngineLogs } from "./engine/Adapter";
-import { readRecord } from "./record/Record";
+import { readRecord, writeRecord } from "./record/Record";
 import { replayRecord } from "./record/Replayer";
 import { makeSyntheticRecord } from "./record/SyntheticRecord";
 import { LAYOUT_VERSION, SIM_VERSION } from "./version";
 
 class UsageError extends Error {}
 
-const USAGE = "usage: sim.mjs <selfcheck|replay> [record] --engine-root <dir>";
+const USAGE = "usage: sim.mjs <selfcheck|replay|synth> [args] --engine-root <dir>";
 
 function out(obj: unknown): void {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -74,6 +74,28 @@ async function main(argv: string[]): Promise<number> {
         if (r.error !== null && r.error.startsWith("setup failed")) failed = true;
       }
       return failed ? 1 : 0;
+    }
+    case "synth": {
+      // synth <out.json.gz> --map World --seats 4 --turns 3000 --seed s [--bots 400] [--nations default] [--commit <sha>]
+      const root = engineRoot(flags);
+      const file = rest[0];
+      if (!file || !flags.map) throw new UsageError("usage: synth <out.json.gz> --map <name> [--seats n] [--turns n] [--seed s] [--bots n] [--nations default|disabled|n]");
+      const nations = flags.nations === undefined ? "disabled" : /^\d+$/.test(flags.nations) ? Number(flags.nations) : (flags.nations as "default" | "disabled");
+      const t0 = performance.now();
+      const rec = await makeSyntheticRecord({
+        map: flags.map,
+        seats: Number(flags.seats ?? 4),
+        turns: Number(flags.turns ?? 3000),
+        seed: flags.seed ?? "synth",
+        bots: Number(flags.bots ?? 0),
+        nations,
+        engineRoot: root,
+      });
+      if (flags.commit) rec.gitCommit = flags.commit;
+      fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+      writeRecord(file, rec);
+      out({ path: file, gameId: rec.info.gameID, turns: rec.info.num_turns, ms: Math.round(performance.now() - t0) });
+      return 0;
     }
     default:
       throw new UsageError(USAGE);
