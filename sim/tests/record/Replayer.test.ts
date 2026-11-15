@@ -58,7 +58,7 @@ test("fills to num_turns", async () => {
 
 test("onTick sees every turn in order", async () => {
   const seen: number[] = [];
-  await replayRecord(base, ENGINE_ROOT, { onTick: (_g, t) => seen.push(t) });
+  await replayRecord(base, ENGINE_ROOT, { onTick: (_g, t) => { seen.push(t); } });
   expect(seen).toHaveLength(600);
   expect(seen[0]).toBe(0);
   expect(seen[599]).toBe(599);
