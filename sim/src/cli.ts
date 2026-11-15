@@ -86,7 +86,7 @@ async function main(argv: string[]): Promise<number> {
       const files = rest.slice(0, flags.limit ? Number(flags.limit) : undefined);
       if (files.length === 0) throw new UsageError("usage: translate-report <records...> [--limit n] --engine-root <dir>");
       const builder = new ReportBuilder();
-      for (const file of files) await reportRecord(readRecord(file), root, builder);
+      for (const file of files) await reportRecord(readRecord(file), root, builder, flags["max-seats"] ? Number(flags["max-seats"]) : Infinity);
       out(builder.build());
       return 0;
     }

@@ -7,7 +7,7 @@
 import type { Attack, EngineGame, Player, Unit } from "../engine/Adapter";
 import { PlayerType, UnitType } from "../engine/Adapter";
 import { toF16 } from "./f16";
-import { clampSmallId, type GameObsCache, LETTERBOX } from "./GameObsCache";
+import { clampSmallId, type GameObsCache, LETTERBOX, safe } from "./GameObsCache";
 import { WINDOW_KIND_CODE, type WindowSpec } from "./Geometry";
 import {
   AI, ATTACK_FEATURES, BUILD_TYPES, EF, EI, GAME_META, GI, MAX_SMALL_ID, MF, MI, MM, NUM_ATTACKS,
@@ -320,7 +320,7 @@ export function encodeSeat(cache: GameObsCache, g: EngineGame, clientID: string,
     if ([col > 0 ? cell - 1 : -1, col < MM - 1 ? cell + 1 : -1, cell - MM, cell + MM, cell].some((c) => c >= 0 && c < MM * MM && hostileCell(c))) {
       s(SI.at_front, 1);
     }
-    if ((u.type() === UnitType.SAMLauncher || u.type() === UnitType.MissileSilo) && u.isInCooldown()) s(SI.in_cooldown, 1);
+    if ((u.type() === UnitType.SAMLauncher || u.type() === UnitType.MissileSilo) && safe(() => u.isInCooldown())) s(SI.in_cooldown, 1);
     const canUp = self.canUpgradeUnit(u);
     if (canUp) {
       s(SI.can_upgrade, 1);
@@ -443,7 +443,7 @@ export function encodeSeat(cache: GameObsCache, g: EngineGame, clientID: string,
   const ownCoast = (cache.ownerCells.get(selfId) ?? []).some((c) => cache.mmTerrain[c] & TERRAIN_BITS.coast);
   if (troops > 0 && ownCoast && self.unitCount(UnitType.TransportShip) < config.boatMaxNumber()) typeMask[T.BOAT] = 1;
   const hasPort = self.unitCount(UnitType.Port) > 0;
-  const readySilo = self.units(UnitType.MissileSilo).some((u) => u.isActive() && !u.isUnderConstruction() && !u.isInCooldown());
+  const readySilo = self.units(UnitType.MissileSilo).some((u) => u.isActive() && !u.isUnderConstruction() && !safe(() => u.isInCooldown()));
   for (let b = 0; b < NUM_BUILD; b++) {
     if (!affordable[b]) continue;
     const t = BUILD_UNIT[b];

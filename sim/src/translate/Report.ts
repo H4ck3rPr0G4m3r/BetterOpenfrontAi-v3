@@ -131,12 +131,18 @@ export class ReportBuilder {
  * intents each human seat sends in the next DECISION_TURNS turns, against the
  * state before those turns (the observation the label is paired with).
  */
-export async function reportRecord(rec: GameRecordJson, engineRoot: string, builder = new ReportBuilder()): Promise<ReportBuilder> {
+export async function reportRecord(rec: GameRecordJson, engineRoot: string, builder = new ReportBuilder(), maxSeats = Infinity): Promise<ReportBuilder> {
   const turns = fillTurns(rec);
   const g = await createGame(startInfoFromRecord(rec), engineRoot);
   const cache = new GameObsCache(g);
   const buf = new ObsBuffer(1);
-  const seats = rec.info.players.map((p) => p.clientID);
+  // The most active humans first (real lobbies have ~110 of them).
+  const counts = new Map<string, number>();
+  for (const t of turns) for (const i of t.intents) counts.set(i.clientID, (counts.get(i.clientID) ?? 0) + 1);
+  const seats = rec.info.players
+    .map((p) => p.clientID)
+    .sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0))
+    .slice(0, maxSeats);
   const labelers = new Map(seats.map((s) => [s, new StepLabeler()]));
   builder.games++;
   for (let t = 0; t < turns.length; t++) {

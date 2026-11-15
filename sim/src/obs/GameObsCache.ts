@@ -257,8 +257,9 @@ export class GameObsCache {
       this.units[o + 4] = STRUCTURES.has(u.type()) ? u.level() : 0;
       let flags = 0;
       if (STRUCTURES.has(u.type()) && u.isUnderConstruction()) flags |= UNIT_FLAGS.underConstruction;
-      if ((u.type() === UnitType.SAMLauncher || u.type() === UnitType.MissileSilo) && u.isInCooldown()) flags |= UNIT_FLAGS.inCooldown;
-      if (NUKES.has(u.type()) && u.targetedBySAM()) flags |= UNIT_FLAGS.targetedBySAM;
+      if ((u.type() === UnitType.SAMLauncher || u.type() === UnitType.MissileSilo) && safe(() => u.isInCooldown())) flags |= UNIT_FLAGS.inCooldown;
+      // Not every nuke type carries nuke state (a MIRV's does not): the engine's getter would throw.
+      if (NUKES.has(u.type()) && safe(() => u.targetedBySAM())) flags |= UNIT_FLAGS.targetedBySAM;
       this.units[o + 5] = flags;
       const target = u.targetTile();
       this.units[o + 6] = target === undefined ? -1 : target % w;
@@ -277,6 +278,15 @@ export class GameObsCache {
     out[5] = this.geometry.offX;
     out[6] = this.geometry.offY;
     out[7] = game.config().defaultSamRange();
+  }
+}
+
+/** Reads a per-unit engine getter that throws when its unit-type state is absent. */
+export function safe<T>(read: () => T, fallback: T | false = false): T | false {
+  try {
+    return read();
+  } catch {
+    return fallback;
   }
 }
 
