@@ -9,11 +9,12 @@ import { quietEngineLogs } from "./engine/Adapter";
 import { readRecord, writeRecord } from "./record/Record";
 import { replayRecord } from "./record/Replayer";
 import { makeSyntheticRecord } from "./record/SyntheticRecord";
+import { layoutJson } from "./obs/Layout";
 import { LAYOUT_VERSION, SIM_VERSION } from "./version";
 
 class UsageError extends Error {}
 
-const USAGE = "usage: sim.mjs <selfcheck|replay|synth> [args] --engine-root <dir>";
+const USAGE = "usage: sim.mjs <selfcheck|replay|synth|layout> [args] --engine-root <dir>";
 
 function out(obj: unknown): void {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -53,6 +54,9 @@ async function main(argv: string[]): Promise<number> {
   const { positional, flags } = parseArgs(argv);
   const [command, ...rest] = positional;
   switch (command) {
+    case "layout":
+      out(layoutJson());
+      return 0;
     case "selfcheck": {
       const root = engineRoot(flags);
       const rec = await makeSyntheticRecord({ map: selfcheckMap(root), seats: 2, turns: 200, seed: "selfcheck", engineRoot: root });

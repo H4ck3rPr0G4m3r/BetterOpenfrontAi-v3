@@ -1,4 +1,3 @@
-/** Bumped whenever sim/ output changes meaning; bundles rebuild when it changes. */
+/** Bumped whenever sim/ output changes meaning; bundles rebuild when sim sources change anyway. */
 export const SIM_VERSION = "0.1.0";
-/** Observation/action layout version (roadmap §3.5). 0 until M2 fixes the layout. */
-export const LAYOUT_VERSION = 0;
+export { LAYOUT_VERSION } from "./obs/Layout";
