@@ -9,7 +9,7 @@
  * with random.nextID() in start order, then nations, then createGame and
  * GameRunner.init(). Map files are read fresh for every game.
  */
-import { GameMapSize, GameMapType, PlayerInfo, PlayerType } from "@openfront/engine-api/game/GameTypes";
+import { GameMapSize, GameMapType, PlayerInfo, PlayerType, TerrainType, UnitType } from "@openfront/engine-api/game/GameTypes";
 import { GameUpdateType, type HashUpdate } from "@openfront/engine-api/game/GameUpdates";
 import { type GameStartInfo, StampedIntentSchema, type Turn } from "@openfront/engine-api/Schemas";
 import { loadTerrainMap } from "@openfront/engine-lib/game/TerrainMapLoader";
@@ -17,7 +17,7 @@ import { PseudoRandom } from "@openfront/engine-lib/PseudoRandom";
 import { simpleHash } from "@openfront/engine-lib/Util";
 import { EngineConfig } from "@openfront/engine/configuration/EngineConfig";
 import { Executor } from "@openfront/engine/execution/ExecutionManager";
-import type { Game } from "@openfront/engine/game/Game";
+import type { Attack, Game, Player, Unit } from "@openfront/engine/game/Game";
 import { createGame as engineCreateGame } from "@openfront/engine/game/GameImpl";
 import { createNationsForGame } from "@openfront/engine/game/NationCreation";
 import { GameRunner } from "@openfront/engine/GameRunner";
@@ -27,7 +27,7 @@ import path from "path";
 import type { GameRecordJson, RecordTurn } from "../record/Record";
 import { FsMapLoader } from "./FsMapLoader";
 
-export type { Game, GameStartInfo, Turn };
+export type { Attack, Game, GameStartInfo, Player, Turn, Unit };
 
 export interface TickOutcome {
   ok: boolean;
@@ -174,4 +174,4 @@ export function mapTypeFromName(name: string): GameMapType {
   throw new Error(`unknown map ${name}`);
 }
 
-export { GameMapSize, GameMapType, PlayerType, PseudoRandom, simpleHash };
+export { GameMapSize, GameMapType, PlayerType, PseudoRandom, simpleHash, TerrainType, UnitType };

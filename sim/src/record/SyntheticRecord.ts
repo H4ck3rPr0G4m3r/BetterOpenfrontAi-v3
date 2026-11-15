@@ -74,9 +74,11 @@ export async function makeSyntheticRecord(opts: SyntheticOptions): Promise<GameR
   for (let t = 0; t < opts.turns; t++) {
     const intents: RecordIntent[] = [];
     if (g.game.inSpawnPhase()) {
-      // Seat i asks to spawn on turn 2 + i (re-asking is harmless).
+      // Seat i asks to spawn on turn 2 + i, and again every 10 turns until the engine accepts a tile.
       for (let i = 0; i < opts.seats; i++) {
-        if (t !== 2 + i) continue;
+        if (t < 2 + i || (t - 2 - i) % 10 !== 0) continue;
+        const p = g.game.playerByClientID(seatClientID(i));
+        if (p !== null && p.hasSpawned()) continue;
         const tile = randomFreeLand(g, rng);
         if (tile !== null) intents.push({ type: "spawn", clientID: seatClientID(i), tile });
       }
@@ -126,7 +128,7 @@ function randomFreeLand(g: EngineGame, rng: PseudoRandom): number | null {
   const h = game.height();
   for (let tries = 0; tries < 10_000; tries++) {
     const ref = game.ref(rng.nextInt(0, w), rng.nextInt(0, h));
-    if (game.isLand(ref) && !game.hasOwner(ref)) return ref;
+    if (game.isLand(ref) && !game.map().isImpassable(ref) && !game.hasOwner(ref)) return ref;
   }
   return null;
 }

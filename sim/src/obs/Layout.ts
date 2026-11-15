@@ -376,7 +376,7 @@ export function obsFieldSpecs(): FieldSpec[] {
   ];
 }
 
-export const GAME_META_FIELDS = ["map_w", "map_h", "mm_tpc", "ticks", "spawn_phase", "off_x", "off_y", "unit_count"] as const;
+export const GAME_META_FIELDS = ["map_w", "map_h", "mm_tpc", "ticks", "spawn_phase", "off_x", "off_y", "sam_range"] as const;
 export const WIN_META_FIELDS = ["x0", "y0", "tpc", "kind", "valid", "priority"] as const;
 export const WINDOW_KINDS = ["core", "front", "coast", "nuke"] as const;
 

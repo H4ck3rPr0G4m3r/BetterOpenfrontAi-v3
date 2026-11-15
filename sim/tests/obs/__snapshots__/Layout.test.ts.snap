@@ -363,7 +363,7 @@ exports[`layout json snapshot 1`] = `
     "spawn_phase",
     "off_x",
     "off_y",
-    "unit_count",
+    "sam_range",
   ],
   "layoutVersion": 1,
   "nukeBuilds": [
