@@ -98,6 +98,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--target", type=int, default=2000)
     p.add_argument("--player", action="append", default=[], help="seed teacher public ID (skips the leaderboard)")
 
+    p = sub.add_parser("serve", help="run the app's local service on 127.0.0.1")
+    p.add_argument("--port", type=int, default=47800)
+
     p = sub.add_parser("build-engine", help="build the sim bundle for one engine commit")
     p.add_argument("commit")
     p.add_argument("--force", action="store_true")
@@ -124,6 +127,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = Crawler(api, Index(), cfg, progress=lambda p: print(json.dumps(p), file=sys.stderr)).run()
         _print(result)
         return 1 if result["phase"] == "error" else 0
+
+    if args.command == "serve":
+        from ofai.service.app import serve
+
+        serve(args.port)
+        return 0
 
     if args.command == "build-engine":
         from ofai.engines import ensure_bundle
