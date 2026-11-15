@@ -1,4 +1,8 @@
-"""Polite client for OpenFront's public API (spec §4.1, §8.1; roadmap §2 Crawling).
+"""Polite client for OpenFront's documented public API (spec §4.1, §8.1; roadmap §2 Crawling).
+
+Uses only the `/public/*` endpoints from the engine's docs/API.md, which are meant
+for third parties. The in-game endpoints (`/game/{id}`, `/leaderboard/ranked`) sit
+behind a Cloudflare challenge on purpose and are never used here.
 
 Rules, all enforced here so no caller can break them:
 - at most one request per `min_interval` seconds (default 1 s), retries included;
@@ -92,7 +96,34 @@ class OpenFrontApi:
     # -- endpoints -----------------------------------------------------------
 
     def leaderboard(self, page: int) -> dict:
-        return self._get("/leaderboard/ranked", {"page": page})
+        """Ranked ladders (`1v1`, `2v2`, `ffa`, ...), 50 per page; pages 1 and 2 exist."""
+        return self._get("/public/leaderboard/ranked", {"page": page})
+
+    def list_games(
+        self,
+        start: str,
+        end: str,
+        *,
+        type: str | None = "Public",
+        mode: str | None = "Free For All",
+        ranked_type: str | None = None,
+        limit: int = 1000,
+        after: str | None = None,
+    ) -> list[dict]:
+        """Game metadata for games started in [start, end] (at most 2 days), sorted by start then id."""
+        params: dict = {"start": start, "end": end, "limit": limit}
+        if type:
+            params["type"] = type
+        if mode:
+            params["mode"] = mode
+        if ranked_type:
+            params["rankedType"] = ranked_type
+        if after:
+            params["after"] = after
+        body = self._get("/public/games", params)
+        if not isinstance(body, list):
+            raise ApiError("game list is not a list")
+        return body
 
     def player_games(self, public_id: str, cursor: str | None = None) -> tuple[list[dict], str | None]:
         params = {"cursor": cursor} if cursor else None
@@ -105,7 +136,7 @@ class OpenFrontApi:
         return results, body.get("nextCursor") or None
 
     def game(self, game_id: str) -> dict:
-        body = self._get(f"/game/{game_id}")
+        body = self._get(f"/public/game/{game_id}")
         if not isinstance(body, dict):
             raise ApiError(f"game {game_id} is not an object")
         return body

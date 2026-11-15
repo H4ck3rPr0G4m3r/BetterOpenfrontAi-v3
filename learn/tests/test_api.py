@@ -118,3 +118,18 @@ def test_player_games_returns_results_and_cursor():
 def test_player_games_without_cursor_is_none():
     api, _ = make_api(lambda r: httpx.Response(200, json={"results": []}))
     assert api.player_games("P1") == ([], None)
+
+
+def test_uses_documented_public_endpoints():
+    urls = []
+
+    def handler(r):
+        urls.append(r.url.path)
+        return httpx.Response(200, json=[] if r.url.path == "/public/games" else {"results": []})
+
+    api, _ = make_api(handler)
+    api.game("g1")
+    api.leaderboard(1)
+    api.list_games("2026-11-14T00:00:00Z", "2026-11-15T00:00:00Z")
+    api.player_games("p1")
+    assert urls == ["/public/game/g1", "/public/leaderboard/ranked", "/public/games", "/public/player/p1/games"]

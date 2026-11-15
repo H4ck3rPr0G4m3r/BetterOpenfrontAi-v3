@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 MIN_DURATION_S = 300
+RANKED_DUELS = frozenset({"1v1", "2v2", "clanwars"})
 
 
 def wanted_summary(entry: Any) -> bool:
@@ -21,6 +22,8 @@ def wanted_summary(entry: Any) -> bool:
     duration = entry.get("durationSeconds")
     if not isinstance(duration, (int, float)) or isinstance(duration, bool):
         return False
+    if entry.get("rankedType") in RANKED_DUELS:
+        return False  # ranked 1v1 / 2v2 are listed with mode "Free For All" but aren't FFA lobbies
     return entry.get("type") == "Public" and entry.get("mode") == "Free For All" and duration >= MIN_DURATION_S
 
 

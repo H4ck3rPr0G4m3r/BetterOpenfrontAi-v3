@@ -67,3 +67,10 @@ def test_detects_modifiers():
 def test_detects_cheats_and_starting_gold():
     cfg = {**CLEAN, "startingGold": 5_000_000, "hostCheats": {"infiniteTroops": True}, "disableAlliances": True}
     assert set(modifiers(cfg)) == {"startingGold", "hostCheats", "disableAlliances"}
+
+
+def test_rejects_ranked_duels():
+    base = {"type": "Public", "mode": "Free For All", "durationSeconds": 900}
+    assert not wanted_summary({**base, "rankedType": "1v1"})
+    assert wanted_summary({**base, "rankedType": "unranked"})
+    assert wanted_summary({**base, "rankedType": "ffa"})

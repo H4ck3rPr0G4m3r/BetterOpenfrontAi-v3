@@ -87,3 +87,42 @@ Error: failed to fetch game record: HTTP 403
 So the Cloudflare challenge also blocks the developer workflow upstream built on purpose. That is most likely an
 unintended side effect of bot protection, and the strongest case for asking the devs to exempt `/game/{id}` (or a
 documented User-Agent) from the challenge.
+
+
+## M0 — EXIT CHECK PASSED on real records (2026-11-15)
+
+**Resolved the access blocker.** The engine's own `docs/API.md` documents a public API for third parties
+(`/public/game/:id`, `/public/games`, `/public/leaderboard/ranked`, `/public/player/:id/games`). Those answer our
+honest `ofai-crawler/0.1` client with `200`; only the in-game endpoints (`/game/{id}`, `/leaderboard/ranked`) are behind
+the challenge. The client now uses `/public/*` only. Ranked 1v1/2v2 matches (listed with mode "Free For All") are
+filtered out.
+
+`python -m ofai fetch-sample --players 30 --games 25`: 25 records in 33 requests (33 s), 14 history entries filtered,
+2 dropped for modifiers (random spawn, compact, doomsday clock). Commits: `bc3e333` 15, `8b5d071` (pin) 8,
+`09aa423` 2.
+
+`python -m ofai replay-check --jobs 14` (2 min 26 s, bundles built on demand):
+
+| Commit | Bundle | Build | ok | mismatch | error |
+|---|---|---|---|---|---|
+| `bc3e333` (2026-11-09) | ok | 5.3 s | 15 | 0 | 0 |
+| `8b5d071` (pin, v0.36.2) | ok | 0.8 s | 8 | 0 | 0 |
+| `09aa423` (2026-11-06) | ok | 11.8 s (own `npm ci`: lockfile differs) | 2 | 0 | 0 |
+
+**25 / 25 fresh public FFA records replay with every hash matching** (22,839 hash checks; median game 8,482 turns,
+longest 12,751; median 110 human players per game, max 130).
+
+Replay speed on real games, 14 processes in parallel (whole games, includes start-up and intent validation):
+
+| Map | ticks/s | Map | ticks/s |
+|---|---|---|---|
+| Gateway to the Atlantic | 192 | Horn Of Africa | 193 |
+| Great Lakes | 164 | Africa | 161 |
+| Balkans | 159 | France | 155 |
+| Scandinavia | 154 | Indian Subcontinent | 151 |
+| Europe | 150 | Mare Nostrum | 144 |
+| Russia | 114 | World 4000 | 114 |
+
+Real 110-player games simulate ~3x slower than the synthetic ones (~150 vs ~400 ticks/s per process). At 14
+workers that is ~2,100 ticks/s ≈ 420 decision steps/s per teacher seat encoded. M2 Task 12 measures the full
+sampler; if it lands under the ~1,200 rows/s the GPU wants, M3 Task 7's hot-subset cache comes in.
