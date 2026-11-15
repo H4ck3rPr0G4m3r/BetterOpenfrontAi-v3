@@ -9,6 +9,7 @@ import { quietEngineLogs } from "./engine/Adapter";
 import { readRecord, writeRecord } from "./record/Record";
 import { replayRecord } from "./record/Replayer";
 import { makeSyntheticRecord } from "./record/SyntheticRecord";
+import { ReportBuilder, reportRecord } from "./translate/Report";
 import { layoutJson } from "./obs/Layout";
 import { LAYOUT_VERSION, SIM_VERSION } from "./version";
 
@@ -78,6 +79,16 @@ async function main(argv: string[]): Promise<number> {
         if (r.error !== null && r.error.startsWith("setup failed")) failed = true;
       }
       return failed ? 1 : 0;
+    }
+    case "translate-report": {
+      // translate-report <records...> [--limit n]: round-trip every human intent (spec §10.4 gate).
+      const root = engineRoot(flags);
+      const files = rest.slice(0, flags.limit ? Number(flags.limit) : undefined);
+      if (files.length === 0) throw new UsageError("usage: translate-report <records...> [--limit n] --engine-root <dir>");
+      const builder = new ReportBuilder();
+      for (const file of files) await reportRecord(readRecord(file), root, builder);
+      out(builder.build());
+      return 0;
     }
     case "synth": {
       // synth <out.json.gz> --map World --seats 4 --turns 3000 --seed s [--bots 400] [--nations default] [--commit <sha>]
