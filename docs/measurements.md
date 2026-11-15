@@ -28,3 +28,20 @@ challenge is hiding from a human check, which roadmap §2 forbids, so the crawle
 **Unblock:** OpenFront allows `ofai-crawler/0.1` (≤ 1 req/s) on `/game/{id}` and `/leaderboard/ranked`, or provides
 an official export. Until then every real-record step (M0 exit check, M1 crawl, M2 translator report on real games,
 M3 training data) waits; everything else is built and tested on synthetic records from our own engine runs.
+
+## M0 — engine bundles (2026-11-15)
+
+`python -m ofai build-engine <commit>` on the 16-core / NVMe Windows box:
+
+| Commit | Status | Total | worktree | deps | bundle | selfcheck | Size on disk |
+|---|---|---|---|---|---|---|---|
+| `8b5d071` (pin, v0.36.2) | ok | 5.3 s | 4.7 s | 0.25 s (links) | 0.16 s | 0.14 s | 1.2 GB (814 MB `resources/`) |
+| `4457217` (upstream main) | ok | 5.4 s | 4.8 s | 0.26 s (links) | 0.16 s | 0.12 s | 1.2 GB |
+
+The bundle (`sim.mjs`) is 1.7 MB. Disk is dominated by the worktree's `resources/` (maps); 10 window commits ≈ 12 GB.
+If that becomes a problem, a sparse checkout without `resources/` plus a shared maps directory is the fix (maps rarely
+change between commits; the selfcheck would catch a map that did).
+
+Upstream's own sample record (`engine/records/demoGame1.json`, Pangaea, 30 bots, default nations) can't serve as a
+real-record check: its `gitCommit` `4444c9c…` is a placeholder (`not our ref` upstream). On the pin it diverges at
+turn 210, as expected for a record from another version.
