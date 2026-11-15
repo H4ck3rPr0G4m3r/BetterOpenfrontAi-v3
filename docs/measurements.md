@@ -70,3 +70,20 @@ game construction matches the real servers'; only real records can (construction
 `createGameRunner` and `tests/replay/ReplayGame.ts` at the pin line for line, including `toWireGameStartInfo`).
 Ticks/s include process start and the engine's per-turn intent validation; they cover the first 5 minutes only
 (late games with more units are slower; M2 Task 12 measures that).
+
+### Upstream's own replay tool is blocked too (2026-11-15)
+
+Upstream issue [#1571](https://github.com/openfrontio/OpenFrontIO/issues/1571) ("Pull replay files from api") was fixed
+by [043462e](https://github.com/openfrontio/OpenFrontIO/commit/043462e28aa75ed494a337971ea89337e764111c) so that
+"contributors can replay games without R2 access" through `api.openfront.io/game/{id}`, and the engine ships
+`npm run replay:game -- <gameID>` for exactly that. At the pin, that tool fails the same way:
+
+```
+$ npx tsx tests/replay/ReplayGame.ts casbB1cgMB
+Fetching https://api.openfront.io/game/casbB1cgMB...
+Error: failed to fetch game record: HTTP 403
+```
+
+So the Cloudflare challenge also blocks the developer workflow upstream built on purpose. That is most likely an
+unintended side effect of bot protection, and the strongest case for asking the devs to exempt `/game/{id}` (or a
+documented User-Agent) from the challenge.
