@@ -179,7 +179,7 @@ export function placeWindows(cache: GameObsCache, g: EngineGame, selfSmallId: nu
 
   // 4. hostile nukes aimed within 2 minimap cells of our land.
   const geo = cache.geometry;
-  for (const u of game.units(...NUKE_TYPES)) {
+  for (const u of game.units(NUKE_TYPES)) {
     if (!u.isActive() || u.owner() === self || self.isFriendly(u.owner())) continue;
     const target = u.targetTile();
     if (target === undefined) continue;

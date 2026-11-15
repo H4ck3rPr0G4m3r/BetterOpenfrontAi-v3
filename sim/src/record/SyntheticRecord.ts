@@ -35,6 +35,8 @@ export interface SyntheticOptions {
   attackEvery?: number;
   /** Extra intents for a turn, decided from the state before it executes. */
   script?: (g: EngineGame, turnNumber: number, rng: PseudoRandom) => RecordIntent[];
+  /** Where seat i spawns (default: random free land). */
+  spawnAt?: (g: EngineGame, seat: number, rng: PseudoRandom) => number | null;
   /** Called after each tick (tests use it to inspect state). */
   onTick?: (g: EngineGame, turnNumber: number) => void;
 }
@@ -79,7 +81,7 @@ export async function makeSyntheticRecord(opts: SyntheticOptions): Promise<GameR
         if (t < 2 + i || (t - 2 - i) % 10 !== 0) continue;
         const p = g.game.playerByClientID(seatClientID(i));
         if (p !== null && p.hasSpawned()) continue;
-        const tile = randomFreeLand(g, rng);
+        const tile = opts.spawnAt?.(g, i, rng) ?? randomFreeLand(g, rng);
         if (tile !== null) intents.push({ type: "spawn", clientID: seatClientID(i), tile });
       }
     } else if (t % attackEvery === 0) {
@@ -120,6 +122,24 @@ export async function makeSyntheticRecord(opts: SyntheticOptions): Promise<GameR
     },
     turns: turns.filter((t) => t.intents.length > 0 || t.hash !== undefined),
   };
+}
+
+/** Free land nearest to (x, y), searching outward ring by ring. */
+export function freeLandNear(g: EngineGame, x: number, y: number, maxRadius = 200): number | null {
+  const game = g.game;
+  for (let r = 0; r <= maxRadius; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const tx = x + dx;
+        const ty = y + dy;
+        if (tx < 0 || ty < 0 || tx >= game.width() || ty >= game.height()) continue;
+        const ref = game.ref(tx, ty);
+        if (game.isLand(ref) && !game.map().isImpassable(ref) && !game.hasOwner(ref)) return ref;
+      }
+    }
+  }
+  return null;
 }
 
 function randomFreeLand(g: EngineGame, rng: PseudoRandom): number | null {
