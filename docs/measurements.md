@@ -1,0 +1,209 @@
+# Measurements
+
+Measured numbers, appended per milestone (roadmap §1 "Refresh rule"). Newest at the bottom of each milestone.
+
+## M0 — sample fetch (2026-11-15)
+
+**Blocked: the API challenges our honest client.** With `User-Agent: ofai-crawler/0.1`:
+
+| Endpoint | Answer |
+|---|---|
+| `GET /leaderboard/ranked?page=1` | `403`, `Cf-Mitigated: challenge` (Cloudflare "Just a moment...") |
+| `GET /public/player/{id}/games` | `200` (history works) |
+| `GET /game/{id}` | `403`, `Cf-Mitigated: challenge` |
+
+curl's default UA gets the same challenge on the leaderboard. The planning probes on 2026-11-14 got `200` only
+because they sent a browser-like UA (`Mozilla/5.0 (research-client)`). Sending a browser-like UA to pass a bot
+challenge is hiding from a human check, which roadmap §2 forbids, so the crawler stops on 403 as specified.
+
+`python -m ofai fetch-sample --players 20 --games 30`:
+
+```json
+{"fetched": 0, "requests": 1, "error": "403 from /leaderboard/ranked (Cloudflare challenge). ..."}
+```
+
+`python -m ofai fetch-sample --player <id> --games 1` (leaderboard skipped): history `200`, then
+`403 from /game/<id> (Cloudflare challenge)` after 2 requests.
+
+**Unblock:** OpenFront allows `ofai-crawler/0.1` (≤ 1 req/s) on `/game/{id}` and `/leaderboard/ranked`, or provides
+an official export. Until then every real-record step (M0 exit check, M1 crawl, M2 translator report on real games,
+M3 training data) waits; everything else is built and tested on synthetic records from our own engine runs.
+
+## M0 — engine bundles (2026-11-15)
+
+`python -m ofai build-engine <commit>` on the 16-core / NVMe Windows box:
+
+| Commit | Status | Total | worktree | deps | bundle | selfcheck | Size on disk |
+|---|---|---|---|---|---|---|---|
+| `8b5d071` (pin, v0.36.2) | ok | 5.3 s | 4.7 s | 0.25 s (links) | 0.16 s | 0.14 s | 1.2 GB (814 MB `resources/`) |
+| `4457217` (upstream main) | ok | 5.4 s | 4.8 s | 0.26 s (links) | 0.16 s | 0.12 s | 1.2 GB |
+
+The bundle (`sim.mjs`) is 1.7 MB. Disk is dominated by the worktree's `resources/` (maps); 10 window commits ≈ 12 GB.
+If that becomes a problem, a sparse checkout without `resources/` plus a shared maps directory is the fix (maps rarely
+change between commits; the selfcheck would catch a map that did).
+
+Upstream's own sample record (`engine/records/demoGame1.json`, Pangaea, 30 bots, default nations) can't serve as a
+real-record check: its `gitCommit` `4444c9c…` is a placeholder (`not our ref` upstream). On the pin it diverges at
+turn 210, as expected for a record from another version.
+
+## M0 — replay-check, pipeline run on synthetic records (2026-11-15)
+
+The M0 exit check (20 fresh public FFA records) is **blocked** by the API challenge above. To exercise the whole
+pipeline meanwhile, `sim.mjs synth` wrote 6 engine-run games (5 min of game time = 3,000 turns, default nations,
+400 bots, 4–8 seats spawning and attacking) on the pin, and `python -m ofai replay-check --jobs 6` replayed them
+through the built bundle:
+
+| Map | Size | Replay ticks/s (6 processes in parallel) |
+|---|---|---|
+| Onion | 512×512 | 712 |
+| Pangaea | 1000×1000 | 499 |
+| World | 2000×1000 | 376 |
+| Australia | — | 329 |
+| Sol (largest in rotation) | 4432×2528 | 356 |
+| Las Vegas Strip (portrait) | 2036×4428 | 291 |
+
+Result: 6/6 ok, 300 hash checks each, 0 mismatches, 0 errors.
+
+**What this does and doesn't prove.** Generation and replay share our adapter, so this proves determinism of our
+construction across processes and the whole fetch → bundle → replay → report pipeline. It does *not* prove that our
+game construction matches the real servers'; only real records can (construction mirrors the engine's own
+`createGameRunner` and `tests/replay/ReplayGame.ts` at the pin line for line, including `toWireGameStartInfo`).
+Ticks/s include process start and the engine's per-turn intent validation; they cover the first 5 minutes only
+(late games with more units are slower; M2 Task 12 measures that).
+
+### Upstream's own replay tool is blocked too (2026-11-15)
+
+Upstream issue [#1571](https://github.com/openfrontio/OpenFrontIO/issues/1571) ("Pull replay files from api") was fixed
+by [043462e](https://github.com/openfrontio/OpenFrontIO/commit/043462e28aa75ed494a337971ea89337e764111c) so that
+"contributors can replay games without R2 access" through `api.openfront.io/game/{id}`, and the engine ships
+`npm run replay:game -- <gameID>` for exactly that. At the pin, that tool fails the same way:
+
+```
+$ npx tsx tests/replay/ReplayGame.ts casbB1cgMB
+Fetching https://api.openfront.io/game/casbB1cgMB...
+Error: failed to fetch game record: HTTP 403
+```
+
+So the Cloudflare challenge also blocks the developer workflow upstream built on purpose. That is most likely an
+unintended side effect of bot protection, and the strongest case for asking the devs to exempt `/game/{id}` (or a
+documented User-Agent) from the challenge.
+
+
+## M0 — EXIT CHECK PASSED on real records (2026-11-15)
+
+**Resolved the access blocker.** The engine's own `docs/API.md` documents a public API for third parties
+(`/public/game/:id`, `/public/games`, `/public/leaderboard/ranked`, `/public/player/:id/games`). Those answer our
+honest `ofai-crawler/0.1` client with `200`; only the in-game endpoints (`/game/{id}`, `/leaderboard/ranked`) are behind
+the challenge. The client now uses `/public/*` only. Ranked 1v1/2v2 matches (listed with mode "Free For All") are
+filtered out.
+
+`python -m ofai fetch-sample --players 30 --games 25`: 25 records in 33 requests (33 s), 14 history entries filtered,
+2 dropped for modifiers (random spawn, compact, doomsday clock). Commits: `bc3e333` 15, `8b5d071` (pin) 8,
+`09aa423` 2.
+
+`python -m ofai replay-check --jobs 14` (2 min 26 s, bundles built on demand):
+
+| Commit | Bundle | Build | ok | mismatch | error |
+|---|---|---|---|---|---|
+| `bc3e333` (2026-11-09) | ok | 5.3 s | 15 | 0 | 0 |
+| `8b5d071` (pin, v0.36.2) | ok | 0.8 s | 8 | 0 | 0 |
+| `09aa423` (2026-11-06) | ok | 11.8 s (own `npm ci`: lockfile differs) | 2 | 0 | 0 |
+
+**25 / 25 fresh public FFA records replay with every hash matching** (22,839 hash checks; median game 8,482 turns,
+longest 12,751; median 110 human players per game, max 130).
+
+Replay speed on real games, 14 processes in parallel (whole games, includes start-up and intent validation):
+
+| Map | ticks/s | Map | ticks/s |
+|---|---|---|---|
+| Gateway to the Atlantic | 192 | Horn Of Africa | 193 |
+| Great Lakes | 164 | Africa | 161 |
+| Balkans | 159 | France | 155 |
+| Scandinavia | 154 | Indian Subcontinent | 151 |
+| Europe | 150 | Mare Nostrum | 144 |
+| Russia | 114 | World 4000 | 114 |
+
+Real 110-player games simulate ~3x slower than the synthetic ones (~150 vs ~400 ticks/s per process). At 14
+workers that is ~2,100 ticks/s ≈ 420 decision steps/s per teacher seat encoded. M2 Task 12 measures the full
+sampler; if it lands under the ~1,200 rows/s the GPU wants, M3 Task 7's hot-subset cache comes in.
+
+## Public API check (2026-11-16)
+
+The documented `/public/*` endpoints (`engine/docs/API.md`) answer the honest client (`ofai-crawler/0.1`, 1 req/s)
+with no challenge. A live `python -m ofai crawl --teachers 3 --target 3` went leaderboard → 3 histories (393 entries
+filtered, 7 dropped for modifiers) → 3 records, and `replay-check` matched every hash on all three (Balkans 252,
+Horn Of Africa 329, Russia 202 ticks/s).
+
+**Rate limit:** none is documented, and responses carry no `RateLimit-*` / `X-RateLimit-*` headers (only
+`Content-Range` on `/public/games`). The open-source game servers (`src/server/Master.ts`, `Worker.ts`) allow
+20 requests/s per IP, but `api.openfront.io` is a separate service whose limit isn't public. We stay at 1 req/s,
+back off on 429 with `Retry-After`, and never probe for the ceiling.
+
+## M2 — step-cost table (2026-11-16)
+
+`node engines/_pin/sim.mjs step-cost --minutes 5 --records <3 pin records>`: env games with 6 policy seats (random
+spawn and land grabs through the translator), 400 bots, default nations, spawn phase + 5 game minutes; replay
+sampler with the 6 most active humans of a real record, 600 decision steps. One process each.
+
+| Map | Size | Source | engine ticks/s | `GameObsCache.update` | `encodeSeat` | rows/s |
+|---|---|---|---|---|---|---|
+| Onion (smallest) | 512×512 | env | 1,078 | 2.8 ms | 0.38 ms | 537 |
+| Sol (largest) | 4432×2528 | env | 487 | 0.5 ms | 0.53 ms | 311 |
+| Las Vegas Strip (portrait) | 2036×4428 | env | 381 | 1.2 ms | 0.55 ms | 275 |
+| World | 2064×1032 | env | 514 | 1.1 ms | 0.47 ms | 320 |
+| Russia (real, 6 teachers) | | replay | | | | 184 |
+| Africa (real, 6 teachers) | | replay | | | | 190 |
+| Great Lakes (real, 6 teachers) | | replay | | | | 219 |
+
+Bytes per row: 128,989 (68 KB per-game rasters repeated per row + 61 KB per seat). No encoder errors on the
+smallest, largest and portrait maps.
+
+**Estimate:** replay sampling at ~200 rows/s per worker × 14 workers ≈ 2,800 rows/s, above the ~1,200 rows/s the
+3060 Ti is expected to train on (spec §8.2). The real-record runs cover mostly the early game (600 steps =
+50 min of turns at 5 turns per step is the whole game for most lobbies, but the spawn phase is cheap), so the
+late-game rate is lower; M3 Task 6's live throughput run decides whether the hot-subset cache (Task 7) is needed.
+
+Engine gotcha found here: `tsx` ignores `useDefineForClassFields: false`, and the engine needs it (nation AI
+classes read constructor parameters from field initializers). Bundles (esbuild) and vitest honour it; Python
+tests run a session-scoped esbuild bundle of the current sources instead of tsx.
+
+## M3 — GPU plane expansion (2026-11-16)
+
+`expand_minimap` / `expand_windows` reproduce the TS reference planes exactly (all 31 planes, minimap and all 8
+windows), on CPU and CUDA, for a synthetic 4-seat game and a real 110-player lobby (every unit kind present,
+1,113 SAM-covered minimap cells).
+
+## M2 — translator round trip on real games (2026-11-16)
+
+`sim.mjs translate-report <6 pin records> --max-seats 6` after widening token selection (pending alliance
+requests, allies, exact neighbours from border tiles):
+
+**99.55 % of 7,584 representable teacher intents round-trip** (gate 98 %; 97.9 % on one game before the change).
+207 excluded (emoji, quick chat, disconnect marks). Misses: 25 alliance requests and 4 attacks to players outside
+the 32 tokens, 1 target-player, 4 unsnappable locations. Near pointer error p50 1.4 / p95 2.2 tiles; far p50 0 /
+p95 1.4 tiles; 25 % of located intents fall inside a window; 13 intents carried past K = 4.
+The 200-game report (M2 Task 12 Step 3) waits for a bigger crawl.
+
+Replay check on the 60-game crawl: **60 / 60 replay-ok across 7 engine commits** (5 bundles built on demand).
+
+## M3 — BC throughput on the 3060 Ti (2026-11-16, Task 6 Step 5)
+
+Real pipeline: 60 crawled games (`bc-throughput` split, not `bc-v1`), one replay pool per commit (7 commits,
+16 sim workers, 64 lanes × 64 steps per sequence), `python -m ofai bc --until <+10 min>`.
+
+| Run | Model | GPU peak | GPU util (avg) | train compute / seq | valid samples/s end to end |
+|---|---|---|---|---|---|
+| 1 | 10.03M, CNN from 64×64 / 32×32, no checkpointing, pools stepped one by one | 14 GB (spills past 8 GB) | 5 % | 34–54 s | 26 |
+| 2 | 10.08M, checkpointed CNN from 32×32 / 16×16, 1 block/stage, 4 fusion layers, bf16 planes; pools in parallel | 7.6 GB (allocator) | 41 % | 6.2–7.4 s | 127 |
+| 3 | as 2, plus a prefetch thread (sim overlaps the GPU step) | 7.6 GB | 75 % | 6.7–9.4 s | **202** |
+
+Micro-benchmark of the final model (128 rows, fwd + bwd, plane expansion included): 188 ms, 1.8 GB peak,
+~680 rows/s. Run 3 trains ~500 rows/s; only ~50 % of rows are valid because a 60-game split leaves most commits'
+lanes idle between games. With a full crawl every lane is busy, so expect **~450–500 valid samples/s**, half the
+~1,000/s the plan hoped for. Options if that is too slow, in order: smaller CNN channels
+((48, 64, 96) / (32, 64): 160 ms per 128 rows, −0.4M params), more workers per commit, or the hot-subset
+cache (Task 7). Task 7 is skipped for now: after prefetch the GPU waits on the stream ~25 % of the time,
+and it is the compute that limits.
+
+Loss on the toy split fell from 5.9 to ~5.4 in the first 60 steps (still in lr warm-up); 88 % of rows are
+STOP-only steps (weighted 0.3); 0.05–0.3 % of labels needed a mask rescue.

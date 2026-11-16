@@ -1,0 +1,36 @@
+// Mirrors the engine's tsconfig.base.json flags (the combination that
+// type-checks the engine packages), plus aliases that resolve the engine's
+// workspace packages straight to the pinned submodule's sources. Bundles for
+// other commits get the same aliases pointed at that commit's worktree
+// (scripts/bundle.mjs), never at engine/node_modules/@openfront, whose links
+// always point at the pinned checkout.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "paths": {
+      "@openfront/engine/*": ["../engine/packages/engine/src/*"],
+      "@openfront/engine-api/*": ["../engine/packages/engine-api/src/*"],
+      "@openfront/engine-lib/*": ["../engine/packages/engine-lib/src/*"],
+      "@openfront/shared/*": ["../engine/packages/shared/src/*"],
+      "@openfront/zbin": ["../engine/packages/zbin/src/index.ts"],
+      "@openfront/zbin/*": ["../engine/packages/zbin/src/*"],
+      "resources/*": ["../engine/resources/*"]
+    },
+    "sourceMap": true,
+    "allowUnusedLabels": false,
+    "experimentalDecorators": true,
+    "resolveJsonModule": true,
+    "strictNullChecks": true,
+    "noImplicitAny": true,
+    "useDefineForClassFields": false,
+    "strictPropertyInitialization": false,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vitest/globals", "node"]
+  },
+  "include": ["src/**/*", "tests/**/*", "../engine/packages/engine-api/globals.d.ts"],
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,21 @@
+# Behaviour cloning (M3 Task 6). Lanes = workers x games_per_worker x seats_per_game.
+split: bc-v1
+workers: 14
+games_per_worker: 2
+seats_per_game: 2
+seq_len: 64
+micro_lanes: 4
+lr: 3.0e-4
+weight_decay: 0.01
+warmup_steps: 1000
+grad_clip: 1.0
+total_samples: 40000000
+eval_every: 2000000
+eval_seqs: 8
+checkpoint_minutes: 30
+stop_weight: 0.3
+value_coef: 0.5
+log_every: 10
+seed: 0
+device: cuda
+model: {}  # ModelConfig defaults (10.1M parameters)

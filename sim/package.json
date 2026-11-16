@@ -1,0 +1,20 @@
+{
+  "name": "@ofai/sim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Everything that touches the OpenFront engine: replay, encoder, action codec, translator, env, bridge.",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "bundle": "node scripts/bundle.mjs --engine-root ../engine --out ../engines/_pin/sim.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "esbuild": "0.28.1",
+    "tsx": "4.22.4",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

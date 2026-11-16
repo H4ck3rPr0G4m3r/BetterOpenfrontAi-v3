@@ -1,0 +1,197 @@
+/**
+ * Bundle entry: `node engines/<commit>/sim.mjs <command> ...` (roadmap §3.3).
+ * stdout carries one JSON object per line and nothing else (engine logs go to
+ * stderr). Exit 0 ok, 2 usage error, 1 anything else.
+ */
+import fs from "fs";
+import path from "path";
+import { quietEngineLogs } from "./engine/Adapter";
+import { readRecord, writeRecord } from "./record/Record";
+import { replayRecord } from "./record/Replayer";
+import { makeSyntheticRecord } from "./record/SyntheticRecord";
+import { ReportBuilder, reportRecord } from "./translate/Report";
+import { layoutJson } from "./obs/Layout";
+import { BridgeServer } from "./bridge/Server";
+import { Sampler } from "./replay/Sampler";
+import { makeEnvHost } from "./env/EnvHost";
+import { envStepCost, replayStepCost } from "./bench/StepCost";
+import { dumpObs } from "./obs/reference/DumpObs";
+import { LAYOUT_VERSION, SIM_VERSION } from "./version";
+
+class UsageError extends Error {}
+
+const USAGE = "usage: sim.mjs <selfcheck|replay|synth|layout|translate-report|serve> [args] --engine-root <dir>";
+
+function out(obj: unknown): void {
+  process.stdout.write(JSON.stringify(obj) + "\n");
+}
+
+function parseArgs(argv: string[]): { positional: string[]; flags: Record<string, string> } {
+  const positional: string[] = [];
+  const flags: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith("--")) throw new UsageError(`missing value for ${a}`);
+      flags[a.slice(2)] = v;
+      i++;
+    } else positional.push(a);
+  }
+  return { positional, flags };
+}
+
+function engineRoot(flags: Record<string, string>): string {
+  const root = flags["engine-root"];
+  if (!root) throw new UsageError(`--engine-root is required. ${USAGE}`);
+  return path.resolve(root);
+}
+
+/** Smallest map this engine commit has; selfcheck plays a short game on it. */
+function selfcheckMap(root: string): string {
+  const maps = path.join(root, "resources", "maps");
+  for (const [dir, name] of [["onion", "Onion"], ["pangaea", "Pangaea"], ["world", "World"]]) {
+    if (fs.existsSync(path.join(maps, dir, "map.bin"))) return name;
+  }
+  throw new Error(`no known small map under ${maps}`);
+}
+
+async function main(argv: string[]): Promise<number> {
+  const { positional, flags } = parseArgs(argv);
+  const [command, ...rest] = positional;
+  switch (command) {
+    case "layout":
+      out(layoutJson());
+      return 0;
+    case "selfcheck": {
+      const root = engineRoot(flags);
+      const rec = await makeSyntheticRecord({ map: selfcheckMap(root), seats: 2, turns: 200, seed: "selfcheck", engineRoot: root });
+      const r = await replayRecord(rec, root);
+      if (r.error !== null || r.mismatchAt !== null || r.hashChecks === 0) {
+        out({ ok: false, error: r.error ?? `selfcheck replay mismatched at ${r.mismatchAt}`, layoutVersion: LAYOUT_VERSION });
+        return 1;
+      }
+      out({ ok: true, layoutVersion: LAYOUT_VERSION, simVersion: SIM_VERSION, ticksPerSec: r.ticksPerSec });
+      return 0;
+    }
+    case "replay": {
+      const root = engineRoot(flags);
+      if (rest.length === 0) throw new UsageError(USAGE);
+      let failed = false;
+      for (const file of rest) {
+        const r = await replayRecord(readRecord(file), root);
+        out({ ...r, path: file });
+        if (r.error !== null && r.error.startsWith("setup failed")) failed = true;
+      }
+      return failed ? 1 : 0;
+    }
+    case "translate-report": {
+      // translate-report <records...> [--limit n]: round-trip every human intent (spec §10.4 gate).
+      const root = engineRoot(flags);
+      const files = rest.slice(0, flags.limit ? Number(flags.limit) : undefined);
+      if (files.length === 0) throw new UsageError("usage: translate-report <records...> [--limit n] --engine-root <dir>");
+      const builder = new ReportBuilder();
+      for (const file of files) await reportRecord(readRecord(file), root, builder, flags["max-seats"] ? Number(flags["max-seats"]) : Infinity);
+      out(builder.build());
+      return 0;
+    }
+    case "synth": {
+      // synth <out.json.gz> --map World --seats 4 --turns 3000 --seed s [--bots 400] [--nations default] [--commit <sha>]
+      const root = engineRoot(flags);
+      const file = rest[0];
+      if (!file || !flags.map) throw new UsageError("usage: synth <out.json.gz> --map <name> [--seats n] [--turns n] [--seed s] [--bots n] [--nations default|disabled|n]");
+      const nations = flags.nations === undefined ? "disabled" : /^\d+$/.test(flags.nations) ? Number(flags.nations) : (flags.nations as "default" | "disabled");
+      const t0 = performance.now();
+      const rec = await makeSyntheticRecord({
+        map: flags.map,
+        seats: Number(flags.seats ?? 4),
+        turns: Number(flags.turns ?? 3000),
+        seed: flags.seed ?? "synth",
+        bots: Number(flags.bots ?? 0),
+        nations,
+        engineRoot: root,
+      });
+      if (flags.commit) rec.gitCommit = flags.commit;
+      fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+      writeRecord(file, rec);
+      out({ path: file, gameId: rec.info.gameID, turns: rec.info.num_turns, ms: Math.round(performance.now() - t0) });
+      return 0;
+    }
+    case "land-curves": {
+      // land-curves <records...> [--client id | --clients a,b] --engine-root <dir>
+      // One line per record: each listed seat's land share at every whole minute.
+      const root = engineRoot(flags);
+      if (rest.length === 0) throw new UsageError("usage: land-curves <records...> [--client id | --clients a,b] --engine-root <dir>");
+      const wanted = (flags.clients ?? flags.client ?? "").split(",").filter(Boolean);
+      for (const file of rest) {
+        const rec = readRecord(file);
+        const ids = wanted.length > 0 ? wanted : rec.info.players.map((p) => p.clientID);
+        const curves: Record<string, number[]> = Object.fromEntries(ids.map((id) => [id, []]));
+        const r = await replayRecord(rec, root, {
+          onTick: (g, turn) => {
+            if (turn === 0 || turn % 600 !== 0) return;
+            const land = Math.max(1, g.game.totalLandTiles());
+            for (const id of ids) {
+              const p = g.game.playerByClientID(id);
+              curves[id].push(p !== null && p.isAlive() ? p.numTilesOwned() / land : 0);
+            }
+          },
+        });
+        out({ path: file, map: String(rec.info.config.gameMap), error: r.error, mismatchAt: r.mismatchAt, curves });
+      }
+      return 0;
+    }
+    case "dump-obs": {
+      // dump-obs <record> --out <dir> [--steps 3] [--every 20] [--seats 4] --engine-root <dir>
+      const root = engineRoot(flags);
+      if (!rest[0] || !flags.out) throw new UsageError("usage: dump-obs <record> --out <dir> [--steps n] [--every n] [--seats n] --engine-root <dir>");
+      out(await dumpObs(rest[0], root, flags.out, Number(flags.steps ?? 3), Number(flags.every ?? 20), Number(flags.seats ?? 4)));
+      return 0;
+    }
+    case "step-cost": {
+      // step-cost [--maps Onion,Sol,...] [--minutes 5] [--seats 6] [--records a.json.gz,b.json.gz] --engine-root <dir>
+      const root = engineRoot(flags);
+      const maps = (flags.maps ?? "Onion,Sol,Las Vegas Strip,World").split(",");
+      const seats = Number(flags.seats ?? 6);
+      for (const map of maps) out(await envStepCost(root, map, seats, Number(flags.minutes ?? 5)));
+      for (const file of (flags.records ?? "").split(",").filter(Boolean)) out({ ...(await replayStepCost(root, file, seats)), path: file });
+      return 0;
+    }
+    case "serve": {
+      // serve --role replay|env --games n --seats n [--port 0] --engine-root <dir>
+      const root = engineRoot(flags);
+      const role = flags.role;
+      const games = Number(flags.games ?? 1);
+      const seats = Number(flags.seats ?? 1);
+      if ((role !== "replay" && role !== "env") || !(games >= 1) || !(seats >= 1)) {
+        throw new UsageError("usage: serve --role replay|env --games n --seats n [--port p] --engine-root <dir>");
+      }
+      const log = (m: string) => process.stderr.write(`${m}\n`);
+      const server =
+        role === "replay"
+          ? new BridgeServer({ role, sampler: new Sampler(root, games, seats), port: Number(flags.port ?? 0), log })
+          : new BridgeServer({ role, env: await makeEnvHost(root, games, seats, flags.commit), port: Number(flags.port ?? 0), log });
+      const port = await server.listen();
+      out({ listening: port, role, rows: server.rows });
+      // The parent owns this process: exit when its end of stdin closes.
+      process.stdin.on("end", () => process.exit(0));
+      process.stdin.resume();
+      return await new Promise<number>(() => {});
+    }
+    default:
+      throw new UsageError(USAGE);
+  }
+}
+
+quietEngineLogs();
+main(process.argv.slice(2)).then(
+  (code) => process.exit(code),
+  (e: unknown) => {
+    if (e instanceof UsageError) {
+      out({ error: e.message });
+      process.exit(2);
+    }
+    out({ error: e instanceof Error ? e.message : String(e) });
+    process.exit(1);
+  },
+);
