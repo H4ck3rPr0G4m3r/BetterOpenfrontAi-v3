@@ -35,7 +35,7 @@ export interface SyntheticOptions {
   attackEvery?: number;
   /** Extra intents for a turn, decided from the state before it executes. */
   script?: (g: EngineGame, turnNumber: number, rng: PseudoRandom) => RecordIntent[];
-  /** Where seat i spawns (default: random free land). */
+  /** Where seat i spawns (default: random free land; null = the seat never asks). */
   spawnAt?: (g: EngineGame, seat: number, rng: PseudoRandom) => number | null;
   /** Called after each tick (tests use it to inspect state). */
   onTick?: (g: EngineGame, turnNumber: number) => void;
@@ -81,7 +81,7 @@ export async function makeSyntheticRecord(opts: SyntheticOptions): Promise<GameR
         if (t < 2 + i || (t - 2 - i) % 10 !== 0) continue;
         const p = g.game.playerByClientID(seatClientID(i));
         if (p !== null && p.hasSpawned()) continue;
-        const tile = opts.spawnAt?.(g, i, rng) ?? randomFreeLand(g, rng);
+        const tile = opts.spawnAt ? opts.spawnAt(g, i, rng) : randomFreeLand(g, rng);
         if (tile !== null) intents.push({ type: "spawn", clientID: seatClientID(i), tile });
       }
     } else if (t % attackEvery === 0) {

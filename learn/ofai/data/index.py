@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS games (
   winner_client TEXT,
   in_window INTEGER NOT NULL DEFAULT 0,
   path TEXT NOT NULL,
-  replay_ok INTEGER            -- NULL unchecked, 1 ok, 0 rejected
+  replay_ok INTEGER,           -- NULL unchecked, 1 ok, 0 rejected
+  ranked INTEGER               -- players the seats' placements are out of
 );
 CREATE INDEX IF NOT EXISTS games_commit ON games(commit_sha);
 CREATE INDEX IF NOT EXISTS games_map ON games(map);
@@ -83,6 +84,9 @@ class Index:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=NORMAL")
             self._db.executescript(SCHEMA)
+            cols = {r[1] for r in self._db.execute("PRAGMA table_info(games)")}
+            if "ranked" not in cols:  # indexes made before placements existed
+                self._db.execute("ALTER TABLE games ADD COLUMN ranked INTEGER")
             self._db.execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
 
     def close(self) -> None:
@@ -142,8 +146,10 @@ class Index:
     def mark_replay(self, game_id: str, ok: bool) -> None:
         self._q("UPDATE games SET replay_ok = ? WHERE id = ?", (int(ok), game_id))
 
-    def set_placements(self, game_id: str, placements: dict[str, int]) -> None:
+    def set_placements(self, game_id: str, placements: dict[str, int], ranked: int | None = None) -> None:
         with self._lock:
+            if ranked is not None:
+                self._db.execute("UPDATE games SET ranked = ? WHERE id = ?", (ranked, game_id))
             for client_id, place in placements.items():
                 self._db.execute("UPDATE seats SET placement = ? WHERE game = ? AND client_id = ?", (place, game_id, client_id))
 
@@ -194,8 +200,8 @@ class Index:
 
     def teacher_seats(self, game_id: str) -> list[dict]:
         rows = self._q(
-            """SELECT s.client_id, s.public_id, s.username, s.placement, p.ffa_elo
-               FROM seats s LEFT JOIN players p ON p.public_id = s.public_id
+            """SELECT s.client_id, s.public_id, s.username, s.placement, p.ffa_elo, g.ranked
+               FROM seats s LEFT JOIN players p ON p.public_id = s.public_id JOIN games g ON g.id = s.game
                WHERE s.game = ? AND s.is_teacher = 1 ORDER BY p.ffa_elo DESC""",
             (game_id,),
         )

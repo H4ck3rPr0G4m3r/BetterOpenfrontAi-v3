@@ -89,3 +89,28 @@ def test_mark_replay_and_filters(tmp_path: Path):
     assert [g["id"] for g in ix.games(commit="a")] == ["g1"]
     assert [g["id"] for g in ix.games(replay_ok=True)] == ["g1"]
     assert ix.stats()["replay"] == {"ok": 1, "rejected": 1, "unchecked": 0}
+
+
+def test_placements_and_ranked_count(tmp_path: Path):
+    ix = Index(tmp_path / "i.sqlite")
+    ix.add_record(rec("g1"), tmp_path / "g1", teachers={"pubA", "pubB"})
+    ix.set_placements("g1", {"AAAAAAAA": 1, "BBBBBBBB": 7}, ranked=40)
+    seats = {s["client_id"]: s for s in ix.teacher_seats("g1")}
+    assert seats["AAAAAAAA"]["placement"] == 1 and seats["BBBBBBBB"]["placement"] == 7
+    assert seats["AAAAAAAA"]["ranked"] == 40
+
+
+def test_old_index_gains_ranked_column(tmp_path: Path):
+    import sqlite3
+
+    path = tmp_path / "i.sqlite"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE games (id TEXT PRIMARY KEY, commit_sha TEXT NOT NULL, map TEXT NOT NULL, start INTEGER,"
+               " duration_s REAL, players INTEGER, winner_client TEXT, in_window INTEGER NOT NULL DEFAULT 0,"
+               " path TEXT NOT NULL, replay_ok INTEGER)")
+    db.commit()
+    db.close()
+    ix = Index(path)
+    ix.add_record(rec("g1"), tmp_path / "g1", teachers={"pubA"})
+    ix.set_placements("g1", {"AAAAAAAA": 2}, ranked=5)
+    assert ix.teacher_seats("g1")[0]["ranked"] == 5

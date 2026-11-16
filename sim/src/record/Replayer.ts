@@ -5,6 +5,7 @@
  * has one. The first mismatch stops the replay; the game is rejected.
  */
 import { createGame, type EngineGame, parseTurn, startInfoFromRecord } from "../engine/Adapter";
+import { PlacementTracker } from "../replay/Placements";
 import { fillTurns, type GameRecordJson } from "./Record";
 
 export interface ReplayResult {
@@ -17,6 +18,10 @@ export interface ReplayResult {
   error: string | null;
   ms: number;
   ticksPerSec: number;
+  /** clientID -> final place among spawned humans and nations (only for a clean full replay). */
+  placements: Record<string, number>;
+  /** Number of ranked players the places are out of. */
+  ranked: number;
 }
 
 export interface ReplayOptions {
@@ -42,6 +47,8 @@ export async function replayRecord(
     error: null,
     ms: 0,
     ticksPerSec: 0,
+    placements: {},
+    ranked: 0,
   };
   const finish = () => {
     result.ms = Math.round(performance.now() - t0);
@@ -59,6 +66,7 @@ export async function replayRecord(
     return finish();
   }
   opts.onStart?.(g);
+  const placements = new PlacementTracker();
 
   for (const turn of turns) {
     const parsed = parseTurn(turn);
@@ -89,8 +97,12 @@ export async function replayRecord(
         }
       }
     }
+    if (turn.turnNumber % 10 === 0) placements.observe(g);
     if (opts.onTick?.(g, turn.turnNumber) === false) break;
   }
+  const p = placements.result(g);
+  result.placements = p.byClient;
+  result.ranked = p.n;
   return finish();
 }
 

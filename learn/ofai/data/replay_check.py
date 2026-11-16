@@ -121,7 +121,7 @@ def check_index(
     def record_verdict(r: dict) -> None:
         index.mark_replay(r["gameId"], r["outcome"] == "ok")
         if r.get("placements"):
-            index.set_placements(r["gameId"], r["placements"])
+            index.set_placements(r["gameId"], r["placements"], r.get("ranked"))
         if kw_on_result:
             kw_on_result(r)
 
