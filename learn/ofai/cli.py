@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from collections.abc import Sequence
@@ -133,7 +134,38 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--resume", default=None, help="run directory to continue")
     p.add_argument("--max-steps", type=int, default=None)
 
+    p = sub.add_parser("freeze-bench", help="freeze bench-v1 with a proxy checkpoint (refuses if it exists)")
+    p.add_argument("proxy")
+
+    p = sub.add_parser("bench", help="run bench-v1 suites with a checkpoint")
+    p.add_argument("checkpoint")
+    p.add_argument("--suites", default="solo_medium,solo_hard,human_proxy")
+    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) - 2))
+    p.add_argument("--games-per-worker", type=int, default=2)
+    p.add_argument("--no-replays", action="store_true")
+    p.add_argument("--no-teacher-curves", action="store_true")
+
     args = parser.parse_args(argv)
+
+    if args.command == "freeze-bench":
+        from ofai.bench.suites import bench_file_sha, freeze_bench_v1
+        from ofai.data.index import Index
+
+        out = freeze_bench_v1(Index(), Path(args.proxy))
+        _print({"bench": str(out), "sha256": bench_file_sha()})
+        return 0
+
+    if args.command == "bench":
+        from ofai.bench.runner import run_bench, teacher_curves
+        from ofai.bench.suites import load_bench
+        from ofai.data.index import Index
+
+        curves = None
+        if not args.no_teacher_curves:
+            curves = teacher_curves(Index(), [m["map"] for m in load_bench()["maps"]])
+        _print(run_bench(Path(args.checkpoint), args.suites.split(","), workers=args.workers,
+                         games_per_worker=args.games_per_worker, replays=not args.no_replays, teacher_curves=curves))
+        return 0
 
     if args.command == "split":
         from ofai.bc.split import make_split

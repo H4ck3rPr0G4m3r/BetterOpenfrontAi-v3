@@ -117,6 +117,30 @@ async function main(argv: string[]): Promise<number> {
       out({ path: file, gameId: rec.info.gameID, turns: rec.info.num_turns, ms: Math.round(performance.now() - t0) });
       return 0;
     }
+    case "land-curves": {
+      // land-curves <records...> [--client id | --clients a,b] --engine-root <dir>
+      // One line per record: each listed seat's land share at every whole minute.
+      const root = engineRoot(flags);
+      if (rest.length === 0) throw new UsageError("usage: land-curves <records...> [--client id | --clients a,b] --engine-root <dir>");
+      const wanted = (flags.clients ?? flags.client ?? "").split(",").filter(Boolean);
+      for (const file of rest) {
+        const rec = readRecord(file);
+        const ids = wanted.length > 0 ? wanted : rec.info.players.map((p) => p.clientID);
+        const curves: Record<string, number[]> = Object.fromEntries(ids.map((id) => [id, []]));
+        const r = await replayRecord(rec, root, {
+          onTick: (g, turn) => {
+            if (turn === 0 || turn % 600 !== 0) return;
+            const land = Math.max(1, g.game.totalLandTiles());
+            for (const id of ids) {
+              const p = g.game.playerByClientID(id);
+              curves[id].push(p !== null && p.isAlive() ? p.numTilesOwned() / land : 0);
+            }
+          },
+        });
+        out({ path: file, map: String(rec.info.config.gameMap), error: r.error, mismatchAt: r.mismatchAt, curves });
+      }
+      return 0;
+    }
     case "dump-obs": {
       // dump-obs <record> --out <dir> [--steps 3] [--every 20] [--seats 4] --engine-root <dir>
       const root = engineRoot(flags);

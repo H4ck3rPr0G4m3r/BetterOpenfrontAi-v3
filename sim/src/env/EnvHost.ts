@@ -67,7 +67,8 @@ export class GameEnvHost implements EnvHost {
       if (env.over && env.lastRecord) records.push({ game: gi, path: env.lastRecord });
       if (env.lastError && results.some((r) => r.terminal === "sim_error")) simErrors.push({ game: gi, error: env.lastError, seed: env.spec!.seed });
     }
-    return this.out({ records, simErrors, decode, over: this.envs.map((e) => e.g === null || e.over) });
+    const land = this.envs.map((e) => (e.g === null ? 0 : e.g.game.totalLandTiles()));
+    return this.out({ records, simErrors, decode, land, over: this.envs.map((e) => e.g === null || e.over) });
   }
 
   private put(gi: number, results: StepResult[]): void {

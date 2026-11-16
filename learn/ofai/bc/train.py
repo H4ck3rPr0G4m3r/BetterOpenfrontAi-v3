@@ -105,7 +105,7 @@ class Trainer:
         path = self.run_dir / f"step-{self.step:08d}.pt"
         ck.save_checkpoint(path, {
             "model": self.policy.state_dict(), "config": self.model_cfg.to_dict(), "trainConfig": self.cfg,
-            "layoutVersion": self.layout.version, "step": self.step, "samples": self.samples, "nextEval": self.next_eval,
+            "layoutVersion": self.layout.version, "layout": self.layout.raw, "step": self.step, "samples": self.samples, "nextEval": self.next_eval,
             "optimizer": self.opt.state_dict(), "stream": stream.state_dict() if stream is not None else None,
             "rng": {"torch": torch.get_rng_state(), "python": random.getstate()}, "parent": None,
             "createdAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
