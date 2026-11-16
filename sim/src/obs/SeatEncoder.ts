@@ -94,7 +94,12 @@ function attackTroopsBetween(from: Player, to: Player | null): number {
   return sum;
 }
 
-/** Token order: self; anyone attacking us or attacked by us; land neighbours; then the biggest. */
+/**
+ * Token order: self; anyone attacking us or attacked by us; players with a
+ * pending alliance request either way; allies; land neighbours (coarse
+ * minimap adjacency, then the engine's exact neighbour list, which catches
+ * small neighbours the minimap blurs away); then the biggest.
+ */
 export function selectTokens(cache: GameObsCache, self: Player, attackers: Set<Player>, targets: Set<Player>): Player[] {
   const chosen: Player[] = [self];
   const seen = new Set<Player>([self]);
@@ -106,6 +111,12 @@ export function selectTokens(cache: GameObsCache, self: Player, attackers: Set<P
   };
   const byTroops = (a: Player, b: Player) => b.troops() - a.troops() || a.smallID() - b.smallID();
   for (const p of [...new Set([...attackers, ...targets])].sort(byTroops)) add(p);
+  const asked = [
+    ...(safe(() => self.incomingAllianceRequests().map((r) => r.requestor()), []) || []),
+    ...(safe(() => self.outgoingAllianceRequests().map((r) => r.recipient()), []) || []),
+  ];
+  for (const p of asked.sort(byTroops)) add(p);
+  for (const p of (safe(() => self.allies(), []) || []).slice().sort(byTroops)) add(p);
   const adj = cache.adjacency.get(self.smallID());
   if (adj) {
     const neighbours = [...adj.entries()]
@@ -116,10 +127,32 @@ export function selectTokens(cache: GameObsCache, self: Player, attackers: Set<P
       if (p) add(p);
     }
   }
+  if (chosen.length < NUM_REAL_TOKENS) for (const p of exactNeighbours(cache, self).sort(byTroops)) add(p);
   const rest = cache.players.filter((p) => p.isAlive() && !seen.has(p));
   rest.sort((a, b) => b.numTilesOwned() - a.numTilesOwned() || a.smallID() - b.smallID());
   for (const p of rest) add(p);
   return chosen;
+}
+
+/** Players owning a tile next to one of self's border tiles (exact, unlike the minimap adjacency). */
+function exactNeighbours(cache: GameObsCache, self: Player): Player[] {
+  const map = cache.g.game.map();
+  const ids = new Set<number>();
+  const out: number[] = [];
+  const own = self.smallID();
+  for (const t of self.borderTiles()) {
+    const n = map.neighbors4(t, out);
+    for (let i = 0; i < n; i++) {
+      const o = map.ownerID(out[i]);
+      if (o !== 0 && o !== own) ids.add(o);
+    }
+  }
+  const players: Player[] = [];
+  for (const id of ids) {
+    const p = cache.bySmallId.get(id);
+    if (p) players.push(p);
+  }
+  return players;
 }
 
 export function encodeSeat(cache: GameObsCache, g: EngineGame, clientID: string, buf: ObsBuffer, row: number): EntityTables {

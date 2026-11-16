@@ -126,3 +126,49 @@ Replay speed on real games, 14 processes in parallel (whole games, includes star
 Real 110-player games simulate ~3x slower than the synthetic ones (~150 vs ~400 ticks/s per process). At 14
 workers that is ~2,100 ticks/s ≈ 420 decision steps/s per teacher seat encoded. M2 Task 12 measures the full
 sampler; if it lands under the ~1,200 rows/s the GPU wants, M3 Task 7's hot-subset cache comes in.
+
+## Public API check (2026-11-16)
+
+The documented `/public/*` endpoints (`engine/docs/API.md`) answer the honest client (`ofai-crawler/0.1`, 1 req/s)
+with no challenge. A live `python -m ofai crawl --teachers 3 --target 3` went leaderboard → 3 histories (393 entries
+filtered, 7 dropped for modifiers) → 3 records, and `replay-check` matched every hash on all three (Balkans 252,
+Horn Of Africa 329, Russia 202 ticks/s).
+
+**Rate limit:** none is documented, and responses carry no `RateLimit-*` / `X-RateLimit-*` headers (only
+`Content-Range` on `/public/games`). The open-source game servers (`src/server/Master.ts`, `Worker.ts`) allow
+20 requests/s per IP, but `api.openfront.io` is a separate service whose limit isn't public. We stay at 1 req/s,
+back off on 429 with `Retry-After`, and never probe for the ceiling.
+
+## M2 — step-cost table (2026-11-16)
+
+`node engines/_pin/sim.mjs step-cost --minutes 5 --records <3 pin records>`: env games with 6 policy seats (random
+spawn and land grabs through the translator), 400 bots, default nations, spawn phase + 5 game minutes; replay
+sampler with the 6 most active humans of a real record, 600 decision steps. One process each.
+
+| Map | Size | Source | engine ticks/s | `GameObsCache.update` | `encodeSeat` | rows/s |
+|---|---|---|---|---|---|---|
+| Onion (smallest) | 512×512 | env | 1,078 | 2.8 ms | 0.38 ms | 537 |
+| Sol (largest) | 4432×2528 | env | 487 | 0.5 ms | 0.53 ms | 311 |
+| Las Vegas Strip (portrait) | 2036×4428 | env | 381 | 1.2 ms | 0.55 ms | 275 |
+| World | 2064×1032 | env | 514 | 1.1 ms | 0.47 ms | 320 |
+| Russia (real, 6 teachers) | | replay | | | | 184 |
+| Africa (real, 6 teachers) | | replay | | | | 190 |
+| Great Lakes (real, 6 teachers) | | replay | | | | 219 |
+
+Bytes per row: 128,989 (68 KB per-game rasters repeated per row + 61 KB per seat). No encoder errors on the
+smallest, largest and portrait maps.
+
+**Estimate:** replay sampling at ~200 rows/s per worker × 14 workers ≈ 2,800 rows/s, above the ~1,200 rows/s the
+3060 Ti is expected to train on (spec §8.2). The real-record runs cover mostly the early game (600 steps =
+50 min of turns at 5 turns per step is the whole game for most lobbies, but the spawn phase is cheap), so the
+late-game rate is lower; M3 Task 6's live throughput run decides whether the hot-subset cache (Task 7) is needed.
+
+Engine gotcha found here: `tsx` ignores `useDefineForClassFields: false`, and the engine needs it (nation AI
+classes read constructor parameters from field initializers). Bundles (esbuild) and vitest honour it; Python
+tests run a session-scoped esbuild bundle of the current sources instead of tsx.
+
+## M3 — GPU plane expansion (2026-11-16)
+
+`expand_minimap` / `expand_windows` reproduce the TS reference planes exactly (all 31 planes, minimap and all 8
+windows), on CPU and CUDA, for a synthetic 4-seat game and a real 110-player lobby (every unit kind present,
+1,113 SAM-covered minimap cells).

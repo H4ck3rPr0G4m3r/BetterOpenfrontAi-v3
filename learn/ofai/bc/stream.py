@@ -125,6 +125,21 @@ class TeacherStream:
         if isinstance(infos, list) and infos and all(isinstance(i, dict) and "queued" in i for i in infos):
             self.queued[commit] = sum(int(i["queued"]) for i in infos)
 
+    def _guarded(self, commit: str, fn):
+        try:
+            return fn()
+        except SimWorkerDied as e:
+            e.commit = commit  # type: ignore[attr-defined]
+            # Drain the other pools' in-flight replies so their workers stay usable.
+            for c, p in self.pools.items():
+                if c != commit and getattr(p, "_sent", None) is not None:
+                    try:
+                        p.recv_next()
+                    except SimWorkerDied:
+                        pass
+                    p._sent = None
+            raise
+
     def lane_range(self, commit: str, worker: int | None = None) -> tuple[int, int]:
         """Lanes [start, end) of one pool, or of one worker of it."""
         start = 0
@@ -162,14 +177,16 @@ class TeacherStream:
     def next_seq(self) -> SeqBatch:
         steps: list[dict[str, np.ndarray]] = []
         for _ in range(self.seq_len):
-            parts = []
+            # Start every pool's step before reading any reply: pools of different
+            # commits then simulate in parallel instead of one after another.
+            split = all(hasattr(p, "send_next") for p in self.pools.values())
             for c, pool in self.pools.items():
                 self._refill(c, pool)
-                try:
-                    b = pool.next()
-                except SimWorkerDied as e:
-                    e.commit = c  # type: ignore[attr-defined]
-                    raise
+                if split:
+                    self._guarded(c, pool.send_next)
+            parts = []
+            for c, pool in self.pools.items():
+                b = self._guarded(c, pool.recv_next if split else pool.next)
                 self._note_queue(c, b)
                 parts.append(b)
             steps.append({k: np.concatenate([p[k] for p in parts], 0) for k in parts[0] if k != "info"})

@@ -105,6 +105,7 @@ class SimPool:
         self.workers: list[_Worker] = []
         self.restarts = 0
         self._next_load = 0
+        self._sent: tuple | None = None
         try:
             for _ in range(workers):
                 self.workers.append(self._spawn())
@@ -183,9 +184,18 @@ class SimPool:
             w.proc.poll()
             raise SimWorkerDied(i, w.stderr(), e) from e
 
+    def send_next(self) -> None:
+        """First half of next(): every worker starts its step (lets several pools run at once)."""
+        self._sent = self._send_all(lambda c: c.send_next(), False)
+
+    def recv_next(self) -> Batch:
+        sent, self._sent = self._sent, None
+        return self._recv_all(sent)
+
     def _all(self, send: Any, _unused: Any, with_index: bool = False) -> Batch:
-        # Every live worker gets its request and has its reply read, even when
-        # another one dies, so no request stays in flight on a healthy worker.
+        return self._recv_all(self._send_all(send, with_index))
+
+    def _send_all(self, send: Any, with_index: bool) -> tuple[list[bool], SimWorkerDied | None]:
         sent: list[bool] = []
         died: SimWorkerDied | None = None
         for i in range(len(self.workers)):
@@ -195,6 +205,12 @@ class SimPool:
             except SimWorkerDied as e:
                 died = died or e
                 sent.append(False)
+        return sent, died
+
+    def _recv_all(self, state: tuple[list[bool], SimWorkerDied | None]) -> Batch:
+        # Every live worker gets its request and has its reply read, even when
+        # another one dies, so no request stays in flight on a healthy worker.
+        sent, died = state
         batches = []
         for i in range(len(self.workers)):
             if not sent[i]:
