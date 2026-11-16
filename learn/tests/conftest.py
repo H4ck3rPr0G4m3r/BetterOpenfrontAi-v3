@@ -48,3 +48,43 @@ def synth_records(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
                     "--engine-root", str(paths.ENGINE))
         files.append(f)
     return files
+
+
+_LAYOUT: list = []
+
+
+def layout():
+    """The layout the current sim sources export."""
+    from ofai.layout import Layout
+
+    if not _LAYOUT:
+        _LAYOUT.append(Layout.from_json(run_sim_src("layout")[0]))
+    return _LAYOUT[0]
+
+
+def dump_obs(record: Path, out: Path, steps: int, every: int):
+    """`sim dump-obs`: (obs arrays, minimap reference planes, window reference planes, rows)."""
+    import numpy as np
+
+    run_sim_src("dump-obs", str(record), "--out", str(out), "--steps", str(steps), "--every", str(every),
+                "--engine-root", str(paths.ENGINE))
+    rows = json.loads((out / "header.json").read_text())["rows"]
+    lay = layout()
+    raw = (out / "obs.bin").read_bytes()
+    obs, end = lay.parse_obs(raw, 0, rows)
+    assert end == len(raw)
+    P = len(lay.planes)
+    MM, WIN, NW = lay.sizes["MM"], lay.sizes["WIN"], lay.sizes["NUM_WINDOWS"]
+    mm = np.frombuffer((out / "mm_ref.bin").read_bytes(), dtype="<f4").reshape(rows, P, MM, MM)
+    win = np.frombuffer((out / "win_ref.bin").read_bytes(), dtype="<f4").reshape(rows, NW, P, WIN, WIN)
+    return obs, mm, win, rows
+
+
+@pytest.fixture(scope="session")
+def synth_dump(tmp_path_factory):
+    """Observation rows from a 4-seat game with nations and bots, 3 points in time."""
+    d = tmp_path_factory.mktemp("dump")
+    rec = d / "rich.json.gz"
+    run_sim_src("synth", str(rec), "--map", SMALL_MAP, "--seats", "4", "--turns", "1500", "--seed", "planes",
+                "--nations", "default", "--bots", "30", "--engine-root", str(paths.ENGINE))
+    return dump_obs(rec, d / "out", steps=3, every=90)
