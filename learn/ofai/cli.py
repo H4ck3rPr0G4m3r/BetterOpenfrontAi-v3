@@ -7,6 +7,8 @@ import json
 import sys
 from collections import Counter
 from collections.abc import Sequence
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from ofai.data.api import ApiError, ApiForbidden, ApiNotFound, OpenFrontApi
 from ofai.data.filters import is_wellformed_summary, modifiers, wanted_summary
@@ -83,6 +85,17 @@ def fetch_sample(api: OpenFrontApi, *, players: int, games: int, seed_players: S
     return summary
 
 
+def _parse_until(text: str | None) -> datetime | None:
+    if not text:
+        return None
+    if len(text) <= 5 and ":" in text:
+        hh, mm = (int(x) for x in text.split(":"))
+        now = datetime.now()
+        at = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        return at if at > now else at + timedelta(days=1)
+    return datetime.fromisoformat(text)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m ofai")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -110,7 +123,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--since", default=None, help="only records whose game started on/after this ISO date")
     p.add_argument("--limit", type=int, default=None)
 
+    p = sub.add_parser("split", help="freeze the train / held-out split (refuses to overwrite)")
+    p.add_argument("--name", default="bc-v1")
+    p.add_argument("--heldout", type=float, default=0.05)
+
+    p = sub.add_parser("bc", help="train (or resume) behaviour cloning")
+    p.add_argument("--config", default=str(Path(__file__).resolve().parents[1] / "configs" / "bc.yaml"))
+    p.add_argument("--until", default=None, help="stop at this local time (HH:MM, today or tomorrow) or ISO datetime")
+    p.add_argument("--resume", default=None, help="run directory to continue")
+    p.add_argument("--max-steps", type=int, default=None)
+
     args = parser.parse_args(argv)
+
+    if args.command == "split":
+        from ofai.bc.split import make_split
+        from ofai.data.index import Index
+
+        _print({"split": str(make_split(Index(), args.name, args.heldout))})
+        return 0
+
+    if args.command == "bc":
+        import yaml
+
+        from ofai import paths
+        from ofai.bc.train import train_bc
+
+        cfg = yaml.safe_load(Path(args.config).read_text()) or {}
+        run_dir = Path(args.resume) if args.resume else paths.RUNS / f"{datetime.now():%Y%m%d-%H%M}-bc"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "config.yaml").write_text(yaml.safe_dump(cfg))
+        _print(train_bc(cfg, run_dir, until=_parse_until(args.until), max_steps=args.max_steps))
+        return 0
 
     if args.command == "fetch-sample":
         with OpenFrontApi() as api:

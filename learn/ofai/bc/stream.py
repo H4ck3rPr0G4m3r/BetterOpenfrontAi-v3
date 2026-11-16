@@ -20,6 +20,7 @@ import numpy as np
 from ofai.bc.split import load_split
 from ofai.bc.weights import placement_value, teacher_weight
 from ofai.bridge import protocol as P
+from ofai.bridge.pool import SimWorkerDied
 from ofai.data.index import Index
 
 SeqBatch = dict[str, Any]
@@ -124,6 +125,34 @@ class TeacherStream:
         if isinstance(infos, list) and infos and all(isinstance(i, dict) and "queued" in i for i in infos):
             self.queued[commit] = sum(int(i["queued"]) for i in infos)
 
+    def lane_range(self, commit: str, worker: int | None = None) -> tuple[int, int]:
+        """Lanes [start, end) of one pool, or of one worker of it."""
+        start = 0
+        for c, p in self.pools.items():
+            if c == commit:
+                if worker is None:
+                    return start, start + p.rows
+                per = p.rows // max(1, len(getattr(p, "workers", [None])))
+                return start + worker * per, start + (worker + 1) * per
+            start += p.rows
+        raise KeyError(commit)
+
+    def restart(self, err: SimWorkerDied) -> tuple[int, int]:
+        """Restarts the dead worker; returns the lanes whose LSTM state must restart.
+
+        The partial sequence is dropped, so every pool's lanes jump ahead by up to
+        seq_len steps: the trainer treats all lanes as fresh after a death."""
+        commit = getattr(err, "commit")
+        self.pools[commit].restart(err.index)
+        self.queued[commit] = 0  # the new worker's queue is empty
+        return self.lane_range(commit, err.index)
+
+    def close(self) -> None:
+        for p in self.pools.values():
+            close = getattr(p, "close", None)
+            if close:
+                close()
+
     # -- batches ----------------------------------------------------------------------
 
     def __iter__(self) -> Iterator[SeqBatch]:
@@ -136,7 +165,11 @@ class TeacherStream:
             parts = []
             for c, pool in self.pools.items():
                 self._refill(c, pool)
-                b = pool.next()
+                try:
+                    b = pool.next()
+                except SimWorkerDied as e:
+                    e.commit = c  # type: ignore[attr-defined]
+                    raise
                 self._note_queue(c, b)
                 parts.append(b)
             steps.append({k: np.concatenate([p[k] for p in parts], 0) for k in parts[0] if k != "info"})
