@@ -18,6 +18,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Install the CUDA build from the PyTorch index (README: Training setup).
+train = ["torch>=2.8"]
 
 [tool.setuptools.packages.find]
 include = ["ofai*"]

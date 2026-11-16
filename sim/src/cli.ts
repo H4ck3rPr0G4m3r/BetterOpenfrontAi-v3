@@ -15,6 +15,7 @@ import { BridgeServer } from "./bridge/Server";
 import { Sampler } from "./replay/Sampler";
 import { makeEnvHost } from "./env/EnvHost";
 import { envStepCost, replayStepCost } from "./bench/StepCost";
+import { dumpObs } from "./obs/reference/DumpObs";
 import { LAYOUT_VERSION, SIM_VERSION } from "./version";
 
 class UsageError extends Error {}
@@ -114,6 +115,13 @@ async function main(argv: string[]): Promise<number> {
       fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
       writeRecord(file, rec);
       out({ path: file, gameId: rec.info.gameID, turns: rec.info.num_turns, ms: Math.round(performance.now() - t0) });
+      return 0;
+    }
+    case "dump-obs": {
+      // dump-obs <record> --out <dir> [--steps 3] [--every 20] [--seats 4] --engine-root <dir>
+      const root = engineRoot(flags);
+      if (!rest[0] || !flags.out) throw new UsageError("usage: dump-obs <record> --out <dir> [--steps n] [--every n] [--seats n] --engine-root <dir>");
+      out(await dumpObs(rest[0], root, flags.out, Number(flags.steps ?? 3), Number(flags.every ?? 20), Number(flags.seats ?? 4)));
       return 0;
     }
     case "step-cost": {
