@@ -78,6 +78,55 @@ def _rows(seq: dict, keys: list[str], l0: int, l1: int) -> dict[str, np.ndarray]
     return out
 
 
+class Prefetcher:
+    """Fetches the next sequence on a thread while the GPU trains on the current one.
+
+    The sim workers are separate processes; this thread only does socket IO and
+    numpy stacking. After an error it pauses until `resume()`, so the main thread
+    can restart a dead worker without a concurrent next_seq()."""
+
+    def __init__(self, stream: Any) -> None:
+        import queue
+
+        self.stream = stream
+        self.q: queue.Queue = queue.Queue(maxsize=1)
+        self.go = threading.Event()
+        self.go.set()
+        self.closed = False
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def _loop(self) -> None:
+        while not self.closed:
+            self.go.wait()
+            if self.closed:
+                return
+            try:
+                item = ("ok", self.stream.next_seq())
+            except BaseException as e:  # noqa: BLE001 - handed to the main thread
+                self.go.clear()
+                item = ("err", e)
+            self.q.put(item)
+
+    def next_seq(self) -> dict:
+        kind, val = self.q.get()
+        if kind == "err":
+            raise val
+        return val
+
+    def resume(self) -> None:
+        self.go.set()
+
+    def close(self) -> None:
+        self.closed = True
+        self.go.set()
+        try:
+            self.q.get_nowait()
+        except Exception:  # noqa: BLE001
+            pass
+        self.thread.join(timeout=600)
+
+
 class Trainer:
     def __init__(self, cfg: dict, run_dir: Path, layout: Layout, make_stream: Callable[[str], Any],
                  log: RunLog | None = None) -> None:
@@ -224,6 +273,7 @@ class Trainer:
         last_ckpt = time.monotonic()
         state = self.policy.initial_state(stream.lanes, self.device)
         reason = "done"
+        feed = Prefetcher(stream) if self.cfg.get("prefetch", True) else None
         try:
             while True:
                 if self.samples >= self.cfg["total_samples"]:
@@ -242,7 +292,7 @@ class Trainer:
                     reason = "until"
                     break
                 try:
-                    seq = stream.next_seq()
+                    seq = feed.next_seq() if feed is not None else stream.next_seq()
                 except SimWorkerDied as e:
                     now = time.monotonic()
                     self.deaths = [d for d in self.deaths if now - d < DEATHS_WINDOW_S] + [now]
@@ -255,6 +305,8 @@ class Trainer:
                                    stderr=e.stderr_tail[-2000:])
                     stream.restart(e)
                     state = self.policy.initial_state(stream.lanes, self.device)
+                    if feed is not None:
+                        feed.resume()
                     continue
                 t0 = time.monotonic()
                 m, state = self.train_seq(seq, state)
@@ -270,6 +322,8 @@ class Trainer:
                     self.save(stream, "periodic")
                     last_ckpt = time.monotonic()
         finally:
+            if feed is not None:
+                feed.close()
             path = self.save(stream, reason)
             self.log.event("stop", reason=reason, step=self.step, samples=self.samples)
             stream.close()

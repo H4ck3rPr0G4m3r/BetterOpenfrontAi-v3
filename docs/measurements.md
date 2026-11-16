@@ -172,3 +172,38 @@ tests run a session-scoped esbuild bundle of the current sources instead of tsx.
 `expand_minimap` / `expand_windows` reproduce the TS reference planes exactly (all 31 planes, minimap and all 8
 windows), on CPU and CUDA, for a synthetic 4-seat game and a real 110-player lobby (every unit kind present,
 1,113 SAM-covered minimap cells).
+
+## M2 — translator round trip on real games (2026-11-16)
+
+`sim.mjs translate-report <6 pin records> --max-seats 6` after widening token selection (pending alliance
+requests, allies, exact neighbours from border tiles):
+
+**99.55 % of 7,584 representable teacher intents round-trip** (gate 98 %; 97.9 % on one game before the change).
+207 excluded (emoji, quick chat, disconnect marks). Misses: 25 alliance requests and 4 attacks to players outside
+the 32 tokens, 1 target-player, 4 unsnappable locations. Near pointer error p50 1.4 / p95 2.2 tiles; far p50 0 /
+p95 1.4 tiles; 25 % of located intents fall inside a window; 13 intents carried past K = 4.
+The 200-game report (M2 Task 12 Step 3) waits for a bigger crawl.
+
+Replay check on the 60-game crawl: **60 / 60 replay-ok across 7 engine commits** (5 bundles built on demand).
+
+## M3 — BC throughput on the 3060 Ti (2026-11-16, Task 6 Step 5)
+
+Real pipeline: 60 crawled games (`bc-throughput` split, not `bc-v1`), one replay pool per commit (7 commits,
+16 sim workers, 64 lanes × 64 steps per sequence), `python -m ofai bc --until <+10 min>`.
+
+| Run | Model | GPU peak | GPU util (avg) | train compute / seq | valid samples/s end to end |
+|---|---|---|---|---|---|
+| 1 | 10.03M, CNN from 64×64 / 32×32, no checkpointing, pools stepped one by one | 14 GB (spills past 8 GB) | 5 % | 34–54 s | 26 |
+| 2 | 10.08M, checkpointed CNN from 32×32 / 16×16, 1 block/stage, 4 fusion layers, bf16 planes; pools in parallel | 7.6 GB (allocator) | 41 % | 6.2–7.4 s | 127 |
+| 3 | as 2, plus a prefetch thread (sim overlaps the GPU step) | 7.6 GB | 75 % | 6.7–9.4 s | **202** |
+
+Micro-benchmark of the final model (128 rows, fwd + bwd, plane expansion included): 188 ms, 1.8 GB peak,
+~680 rows/s. Run 3 trains ~500 rows/s; only ~50 % of rows are valid because a 60-game split leaves most commits'
+lanes idle between games. With a full crawl every lane is busy, so expect **~450–500 valid samples/s**, half the
+~1,000/s the plan hoped for. Options if that is too slow, in order: smaller CNN channels
+((48, 64, 96) / (32, 64): 160 ms per 128 rows, −0.4M params), more workers per commit, or the hot-subset
+cache (Task 7). Task 7 is skipped for now: after prefetch the GPU waits on the stream ~25 % of the time,
+and it is the compute that limits.
+
+Loss on the toy split fell from 5.9 to ~5.4 in the first 60 steps (still in lr warm-up); 88 % of rows are
+STOP-only steps (weighted 0.3); 0.05–0.3 % of labels needed a mask rescue.
