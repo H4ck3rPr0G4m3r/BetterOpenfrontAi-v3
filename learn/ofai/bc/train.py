@@ -38,7 +38,7 @@ from ofai.runlog import RunLog
 DEFAULTS: dict[str, Any] = {
     # Lanes = workers x games_per_worker x seats_per_game (per pool, summed over commits).
     "seq_len": 64,
-    "micro_lanes": 8,
+    "micro_lanes": 4,
     "workers": 14,
     "games_per_worker": 2,
     "seats_per_game": 2,

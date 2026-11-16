@@ -42,16 +42,17 @@ def coords(n: int, h: int, w: int, device, dtype) -> torch.Tensor:
 class MinimapEncoder(nn.Module):
     """[N, P, 128, 128] -> summary [N, width], coarse keys [N, ptr, 32, 32], fine keys [N, fine, 128, 128]."""
 
-    def __init__(self, planes: int, channels: tuple, blocks: int, width: int, ptr_dim: int, fine_dim: int) -> None:
+    def __init__(self, planes: int, channels: tuple, blocks: int, width: int, ptr_dim: int, fine_dim: int,
+                 stem_stride: int = 4) -> None:
         super().__init__()
         c1, c2, c3 = channels
-        self.stem = nn.Conv2d(planes + 2, c1, 4, stride=2, padding=1)  # 64x64
+        self.stem = nn.Conv2d(planes + 2, c1, stem_stride, stride=stem_stride)  # 128 / stride
         self.s1 = nn.Sequential(*[ResBlock(c1) for _ in range(blocks)])
-        self.down2 = nn.Conv2d(c1, c2, 3, stride=2, padding=1)  # 32x32
+        self.down2 = nn.Conv2d(c1, c2, 3, stride=2, padding=1)
         self.s2 = nn.Sequential(*[ResBlock(c2) for _ in range(blocks)])
-        self.down3 = nn.Conv2d(c2, c3, 3, stride=2, padding=1)  # 16x16
+        self.down3 = nn.Conv2d(c2, c3, 3, stride=2, padding=1)
         self.s3 = nn.Sequential(*[ResBlock(c3) for _ in range(blocks)])
-        self.up = nn.ConvTranspose2d(c3, c2, 2, stride=2)  # back to 32x32
+        self.up = nn.ConvTranspose2d(c3, c2, 2, stride=2)  # back to the keys' resolution
         self.keys = nn.Conv2d(c2, ptr_dim, 1)
         self.fine = nn.Conv2d(planes + 2, fine_dim, 3, padding=1)
         self.summary = nn.Linear(2 * c3, width)
@@ -68,16 +69,22 @@ class MinimapEncoder(nn.Module):
 
 
 class WindowEncoder(nn.Module):
-    """[N, W, P, 32, 32] + meta [N, W, M] -> tokens [N, W, width], cell keys [N, W, ptr, 32, 32]."""
+    """[N, W, P, 32, 32] + meta [N, W, M] -> tokens [N, W, width], cell keys [N, W, ptr, 32, 32].
 
-    def __init__(self, planes: int, channels: tuple, blocks: int, width: int, ptr_dim: int, meta: int) -> None:
+    The CNN runs at 32 / stem_stride; cell keys are its features upsampled back to 32x32 plus a
+    1x1 projection of the input planes, so the near pointer keeps cell resolution cheaply."""
+
+    def __init__(self, planes: int, channels: tuple, blocks: int, width: int, ptr_dim: int, meta: int,
+                 stem_stride: int = 2) -> None:
         super().__init__()
         c1, c2 = channels
-        self.stem = nn.Conv2d(planes + 2, c1, 3, padding=1)
+        self.stride = stem_stride
+        self.stem = nn.Conv2d(planes + 2, c1, 3, stride=stem_stride, padding=1)
         self.s1 = nn.Sequential(*[ResBlock(c1) for _ in range(blocks)])
         self.down = nn.Conv2d(c1, c2, 3, stride=2, padding=1)
         self.s2 = nn.Sequential(*[ResBlock(c2) for _ in range(blocks)])
         self.keys = nn.Conv2d(c1, ptr_dim, 1)
+        self.fine = nn.Conv2d(planes + 2, ptr_dim, 1)
         self.token = nn.Linear(2 * c2, width)
         self.meta = mlp(meta, width, width, last_act=False)
 
@@ -88,7 +95,10 @@ class WindowEncoder(nn.Module):
         a = self.s1(self.stem(x))
         b = self.s2(self.down(a))
         tok = self.token(torch.cat([b.mean((2, 3)), b.amax((2, 3))], 1)).view(n, nw, -1)
-        keys = self.keys(a).view(n, nw, -1, h, w)
+        keys = self.keys(a)
+        if self.stride > 1:
+            keys = keys.repeat_interleave(self.stride, 2).repeat_interleave(self.stride, 3)
+        keys = (keys + self.fine(x)).view(n, nw, -1, h, w)
         return tok + self.meta(meta), keys
 
 

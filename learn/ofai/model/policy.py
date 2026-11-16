@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from ofai.layout import Layout
 from ofai.model.config import ModelConfig
@@ -68,8 +69,10 @@ class Policy(nn.Module):
         self.n_troops = int(s["TROOP_BUCKETS"])
         feats = layout.features
 
-        self.minimap = MinimapEncoder(P, cfg.cnn_channels, cfg.blocks_per_stage, W, cfg.ptr_dim, cfg.fine_dim)
-        self.window = WindowEncoder(P, cfg.win_channels, cfg.blocks_per_stage, W, cfg.ptr_dim, int(s["WIN_META"]))
+        self.minimap = MinimapEncoder(P, cfg.cnn_channels, cfg.blocks_per_stage, W, cfg.ptr_dim, cfg.fine_dim,
+                                      cfg.mm_stem_stride)
+        self.window = WindowEncoder(P, cfg.win_channels, cfg.blocks_per_stage, W, cfg.ptr_dim, int(s["WIN_META"]),
+                                    cfg.win_stem_stride)
         self.player_enc = PlayerEncoder(len(feats["players"]), len(feats["edges"]), W, cfg.heads, cfg.player_layers, cfg.ff_mult)
         self.struct_enc = mlp(len(feats["structs"]), W, W, last_act=False)
         self.mobile_enc = mlp(len(feats["mobile"]), W, W, last_act=False)
@@ -136,8 +139,10 @@ class Policy(nn.Module):
     def encode(self, obs: dict[str, torch.Tensor]) -> tuple[torch.Tensor, CoreCtx]:
         dev = obs["mm_owner"].device
         lay = self.layout
-        mm_planes = expand_minimap(obs, lay)
-        win_planes = expand_windows(obs, lay)
+        # bf16 planes when the encoders run under autocast (no fp32 -> bf16 copy, half the memory).
+        pdt = torch.bfloat16 if (self.cfg.amp and dev.type == "cuda") else torch.float32
+        mm_planes = expand_minimap(obs, lay, pdt)
+        win_planes = expand_windows(obs, lay, pdt)
         players = obs["players"].float()
         structs, mobile, attacks = obs["structs"].float(), obs["mobile"].float(), obs["attacks"].float()
         pv = players[..., self.fv["players"]] > 0.5
@@ -153,9 +158,14 @@ class Policy(nn.Module):
         meta[..., self.wm.index("tpc")] /= 4.0
         wv = obs["win_meta"][..., self.wm.index("valid")] > 0.5
         n = players.shape[0]
+        ckpt = self.cfg.checkpoint_cnn and self.training and torch.is_grad_enabled()
         with self._autocast(dev):
-            mm_tok, mm_keys, mm_fine = self.minimap(mm_planes)
-            win_tok, win_keys = self.window(win_planes, meta)
+            if ckpt:
+                mm_tok, mm_keys, mm_fine = checkpoint(self.minimap, mm_planes, use_reentrant=False)
+                win_tok, win_keys = checkpoint(self.window, win_planes, meta, use_reentrant=False)
+            else:
+                mm_tok, mm_keys, mm_fine = self.minimap(mm_planes)
+                win_tok, win_keys = self.window(win_planes, meta)
             p_tok = self.player_enc(players, obs["edges"].float(), pv)
             tokens = torch.cat([
                 self.global_enc(obs["globals"].float()).unsqueeze(1), mm_tok.unsqueeze(1), win_tok, p_tok,
@@ -191,7 +201,7 @@ class Policy(nn.Module):
     def _masks(self, obs, mm_planes, win_planes, win_valid) -> dict[str, torch.Tensor]:
         n = mm_planes.shape[0]
         p = self.plane
-        mm = lambda name: mm_planes[:, p[name]].reshape(n, -1) > 0.5  # noqa: E731
+        mm = lambda name: mm_planes[:, p[name]].reshape(n, -1) > 0.5  # noqa: E731  (0/1 planes: exact in bf16)
         wn = lambda name: win_planes[:, :, p[name]].reshape(n, self.NW, -1) > 0.5  # noqa: E731
         return {
             "type": obs["type_mask"].bool(),

@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass, field
 class ModelConfig:
     width: int = 256
     lstm: int = 512
-    fusion_layers: int = 3
+    fusion_layers: int = 4
     player_layers: int = 3
     heads: int = 8
     cnn_channels: tuple = (64, 96, 128)
@@ -17,8 +17,11 @@ class ModelConfig:
     ff_mult: int = 4
     ptr_dim: int = 64  # key/query size of the pointer heads
     fine_dim: int = 8  # full-resolution minimap key size (far pointer)
-    blocks_per_stage: int = 2
+    blocks_per_stage: int = 1
+    mm_stem_stride: int = 4  # minimap CNN starts at 128 / 4 = 32x32 (throughput, M3 Task 6 Step 5)
+    win_stem_stride: int = 2  # window CNN starts at 16x16
     amp: bool = True  # bf16 autocast for encoders on CUDA
+    checkpoint_cnn: bool = True  # recompute CNN activations in backward (training memory)
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:

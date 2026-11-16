@@ -4,7 +4,7 @@ workers: 14
 games_per_worker: 2
 seats_per_game: 2
 seq_len: 64
-micro_lanes: 8
+micro_lanes: 4
 lr: 3.0e-4
 weight_decay: 0.01
 warmup_steps: 1000
@@ -18,4 +18,4 @@ value_coef: 0.5
 log_every: 10
 seed: 0
 device: cuda
-model: {}  # ModelConfig defaults (10.0M parameters)
+model: {}  # ModelConfig defaults (10.1M parameters)

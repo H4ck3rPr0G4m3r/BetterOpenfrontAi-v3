@@ -87,7 +87,7 @@ def _expand(
     unit_cell: torch.Tensor,  # [N, U] int64 cell index or -1
     unit_type: torch.Tensor,  # [N, U] int64, -1 empty
     unit_rel: torch.Tensor,  # [N, U] int64 relation of the unit's owner
-    sam: tuple[torch.Tensor, torch.Tensor] | None,  # (view idx, cell idx) of SAM-covered cells
+    sam: torch.Tensor | None,  # [N, H*W] bool SAM-covered cells
 ) -> torch.Tensor:
     N, H, W = owner.shape
     P = len(t.kinds)
@@ -100,7 +100,6 @@ def _expand(
     terr = terrain.int()
     is_land = (terr & t.land_bit) != 0
     owned = valid & (owner != 0)
-    rel_hit = t.rel_table[:, rel]  # [P, N, H, W]
     out = torch.zeros(N, P, H, W, dtype=torch.float32, device=dev)
     for p, kind in enumerate(t.kinds):
         if kind == "valid":
@@ -112,7 +111,7 @@ def _expand(
             if bool(t.owner_unowned[p]):
                 out[:, p] = (valid & (owner == 0) & is_land).float()
             else:
-                hit = owned & rel_hit[p]
+                hit = owned & t.rel_table[p][rel]
                 out[:, p] = torch.where(hit, dens if kind == "density" else torch.ones_like(dens), torch.zeros_like(dens))
         elif kind == "units":
             ok = (unit_type >= 0) & (unit_cell >= 0)
@@ -123,9 +122,7 @@ def _expand(
                 plane[n_idx, unit_cell[n_idx, u_idx]] = 1.0
                 out[:, p] = plane.view(N, H, W)
         elif kind == "sam_cover" and sam is not None:
-            plane = torch.zeros(N, H * W, dtype=torch.float32, device=dev)
-            plane[sam[0], sam[1]] = 1.0
-            out[:, p] = plane.view(N, H, W) * valid.float()  # letterbox cells are never covered
+            out[:, p] = (sam.view(N, H, W) & valid).float()  # letterbox cells are never covered
     return out
 
 
@@ -144,33 +141,34 @@ def _unit_fields(layout: Layout, obs: dict[str, torch.Tensor]):
 
 
 def _sam_cover(
-    t: PlaneTables, sam_p: int, utype, urel, ux, uy, n_views: int, view_of_row: torch.Tensor,
+    t: PlaneTables, sam_p: int, utype, urel, ux, uy, n_views: int, views_per_row: int,
     centre_x: torch.Tensor, centre_y: torch.Tensor, tpc: torch.Tensor, sam_range: torch.Tensor,
-):
-    """Covered (view, cell) pairs. centre_*: [n_views, H*W] float64 cell centres in tiles; tpc, sam_range: [n_views]."""
+) -> torch.Tensor | None:
+    """[n_views, C] bool: cells within SAM range of a SAM the plane marks. View v belongs to row v // views_per_row.
+
+    centre_*: [n_views, C] float64 cell centres in tiles; tpc, sam_range: [n_views]. Same float64 ops as the TS
+    reference, so the disk edge agrees exactly."""
     ok = (utype >= 0) & t.unit_table[sam_p][utype.clamp(min=0)] & t.rel_table[sam_p][urel]
     b_idx, u_idx = ok.nonzero(as_tuple=True)
     if b_idx.numel() == 0:
         return None
-    vs, cs = [], []
-    for b, u in zip(b_idx.tolist(), u_idx.tolist()):
-        views = (view_of_row == b).nonzero(as_tuple=True)[0]
-        for v in views.tolist():
-            tp = tpc[v]
-            r = sam_range[v] / tp
-            r2 = r * r
-            dx = (centre_x[v] - ux[b, u]) / tp
-            dy = (centre_y[v] - uy[b, u]) / tp
-            cover = (dx * dx + dy * dy) <= r2
-            c = cover.nonzero(as_tuple=True)[0]
-            vs.append(torch.full_like(c, v))
-            cs.append(c)
-    if not cs:
-        return None
-    return torch.cat(vs), torch.cat(cs)
+    V = views_per_row
+    dev = centre_x.device
+    v_idx = (b_idx[:, None] * V + torch.arange(V, device=dev)[None, :]).reshape(-1)
+    sx = ux[b_idx, u_idx].repeat_interleave(V)[:, None]
+    sy = uy[b_idx, u_idx].repeat_interleave(V)[:, None]
+    out = torch.zeros(n_views, centre_x.shape[1], dtype=torch.float32, device=dev)
+    for c in range(0, v_idx.numel(), 2048):  # bounded memory on busy late-game batches
+        v = v_idx[c : c + 2048]
+        tp = tpc[v][:, None]
+        r = sam_range[v][:, None] / tp
+        dx = (centre_x[v] - sx[c : c + 2048]) / tp
+        dy = (centre_y[v] - sy[c : c + 2048]) / tp
+        out.index_add_(0, v, ((dx * dx + dy * dy) <= r * r).float())
+    return out > 0
 
 
-def expand_minimap(obs: dict[str, torch.Tensor], layout: Layout) -> torch.Tensor:
+def expand_minimap(obs: dict[str, torch.Tensor], layout: Layout, dtype: torch.dtype = torch.float32) -> torch.Tensor:
     """[B, P, MM, MM] float planes of the minimap."""
     dev = obs["mm_owner"].device
     t = plane_tables(layout, dev)
@@ -192,12 +190,12 @@ def expand_minimap(obs: dict[str, torch.Tensor], layout: Layout) -> torch.Tensor
         gy = grid[:, None].expand(MM, MM).reshape(-1)
         centre_x = (gx[None, :] - off_x[:, None] + 0.5) * tpc[:, None]
         centre_y = (gy[None, :] - off_y[:, None] + 0.5) * tpc[:, None]
-        sam = _sam_cover(t, t.kinds.index("sam_cover"), utype, urel, ux, uy, B, torch.arange(B, device=dev),
-                         centre_x, centre_y, tpc, sam_range)
-    return _expand(t, obs["mm_owner"].int(), obs["mm_terrain"], obs["relation"], obs["density"], cell, utype, urel, sam)
+        sam = _sam_cover(t, t.kinds.index("sam_cover"), utype, urel, ux, uy, B, 1, centre_x, centre_y, tpc, sam_range)
+    return _expand(t, obs["mm_owner"].int(), obs["mm_terrain"], obs["relation"], obs["density"], cell, utype, urel,
+                   sam).to(dtype)
 
 
-def expand_windows(obs: dict[str, torch.Tensor], layout: Layout) -> torch.Tensor:
+def expand_windows(obs: dict[str, torch.Tensor], layout: Layout, dtype: torch.dtype = torch.float32) -> torch.Tensor:
     """[B, NUM_WINDOWS, P, WIN, WIN] float planes of the zoom windows (zeros for invalid windows)."""
     dev = obs["win_owner"].device
     t = plane_tables(layout, dev)
@@ -233,9 +231,8 @@ def expand_windows(obs: dict[str, torch.Tensor], layout: Layout) -> torch.Tensor
         centre_x = x0[:, None] + (gx[None, :] + 0.5) * safe_tpc[:, None]
         centre_y = y0[:, None] + (gy[None, :] + 0.5) * safe_tpc[:, None]
         sam_range = _gm(layout, obs, "sam_range").double()[view_of_row]
-        views_valid = torch.where(wvalid, view_of_row, torch.full_like(view_of_row, -1))
-        sam = _sam_cover(t, t.kinds.index("sam_cover"), utype, urel, ux, uy, B * NW, views_valid,
-                         centre_x, centre_y, safe_tpc, sam_range)
+        sam = _sam_cover(t, t.kinds.index("sam_cover"), utype, urel, ux, uy, B * NW, NW, centre_x, centre_y,
+                         safe_tpc, sam_range)
     out = _expand(t, owner, terrain, obs["relation"][view_of_row], obs["density"][view_of_row], cell, utv,
                   urel[view_of_row], sam)
-    return out.view(B, NW, len(t.kinds), WIN, WIN)
+    return out.view(B, NW, len(t.kinds), WIN, WIN).to(dtype)
