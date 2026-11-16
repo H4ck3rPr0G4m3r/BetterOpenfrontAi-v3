@@ -11,11 +11,14 @@ import { replayRecord } from "./record/Replayer";
 import { makeSyntheticRecord } from "./record/SyntheticRecord";
 import { ReportBuilder, reportRecord } from "./translate/Report";
 import { layoutJson } from "./obs/Layout";
+import { BridgeServer } from "./bridge/Server";
+import { Sampler } from "./replay/Sampler";
+import { makeEnvHost } from "./env/EnvHost";
 import { LAYOUT_VERSION, SIM_VERSION } from "./version";
 
 class UsageError extends Error {}
 
-const USAGE = "usage: sim.mjs <selfcheck|replay|synth|layout> [args] --engine-root <dir>";
+const USAGE = "usage: sim.mjs <selfcheck|replay|synth|layout|translate-report|serve> [args] --engine-root <dir>";
 
 function out(obj: unknown): void {
   process.stdout.write(JSON.stringify(obj) + "\n");
@@ -111,6 +114,27 @@ async function main(argv: string[]): Promise<number> {
       writeRecord(file, rec);
       out({ path: file, gameId: rec.info.gameID, turns: rec.info.num_turns, ms: Math.round(performance.now() - t0) });
       return 0;
+    }
+    case "serve": {
+      // serve --role replay|env --games n --seats n [--port 0] --engine-root <dir>
+      const root = engineRoot(flags);
+      const role = flags.role;
+      const games = Number(flags.games ?? 1);
+      const seats = Number(flags.seats ?? 1);
+      if ((role !== "replay" && role !== "env") || !(games >= 1) || !(seats >= 1)) {
+        throw new UsageError("usage: serve --role replay|env --games n --seats n [--port p] --engine-root <dir>");
+      }
+      const log = (m: string) => process.stderr.write(`${m}\n`);
+      const server =
+        role === "replay"
+          ? new BridgeServer({ role, sampler: new Sampler(root, games, seats), port: Number(flags.port ?? 0), log })
+          : new BridgeServer({ role, env: await makeEnvHost(root, games, seats, flags.commit), port: Number(flags.port ?? 0), log });
+      const port = await server.listen();
+      out({ listening: port, role, rows: server.rows });
+      // The parent owns this process: exit when its end of stdin closes.
+      process.stdin.on("end", () => process.exit(0));
+      process.stdin.resume();
+      return await new Promise<number>(() => {});
     }
     default:
       throw new UsageError(USAGE);

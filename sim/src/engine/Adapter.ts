@@ -33,6 +33,10 @@ export interface TickOutcome {
   ok: boolean;
   /** Hash updates the engine emitted during this tick (every 10 ticks). */
   hashes: { tick: number; hash: number }[];
+  /** Conquests this tick (a player eliminated): ids are engine PlayerIDs. */
+  conquests: { conqueror: string; conquered: string }[];
+  /** The game's winner when it was decided this tick, e.g. ["player", clientID]. */
+  winner?: unknown[];
   error?: string;
 }
 
@@ -92,6 +96,8 @@ export async function createGame(start: GameStartInfo, engineRoot: string): Prom
   );
 
   let tickHashes: { tick: number; hash: number }[] = [];
+  let conquests: { conqueror: string; conquered: string }[] = [];
+  let winner: unknown[] | undefined;
   let fatal: string | undefined;
   const runner = new GameRunner(
     game,
@@ -108,6 +114,10 @@ export async function createGame(start: GameStartInfo, engineRoot: string): Prom
       }
       const hashes = gu.updates[GameUpdateType.Hash] as HashUpdate[] | undefined;
       if (hashes) for (const h of hashes) tickHashes.push({ tick: h.tick, hash: h.hash });
+      const cs = gu.updates[GameUpdateType.ConquestEvent] as { conquerorId: string; conqueredId: string }[] | undefined;
+      if (cs) for (const c of cs) conquests.push({ conqueror: c.conquerorId, conquered: c.conqueredId });
+      const wins = gu.updates[GameUpdateType.Win] as { winner: unknown[] }[] | undefined;
+      if (wins && wins.length > 0) winner = wins[wins.length - 1].winner;
     },
   );
   runner.init();
@@ -118,11 +128,13 @@ export async function createGame(start: GameStartInfo, engineRoot: string): Prom
     gameID: start.gameID,
     tick(turn) {
       tickHashes = [];
+      conquests = [];
+      winner = undefined;
       fatal = undefined;
       runner.addTurn(turn as Turn);
       const ok = runner.executeNextTick();
-      if (!ok) return { ok: false, hashes: tickHashes, error: fatal ?? "tick did not execute" };
-      return { ok: true, hashes: tickHashes };
+      if (!ok) return { ok: false, hashes: tickHashes, conquests, winner, error: fatal ?? "tick did not execute" };
+      return { ok: true, hashes: tickHashes, conquests, winner };
     },
     ticks: () => game.ticks(),
   };
