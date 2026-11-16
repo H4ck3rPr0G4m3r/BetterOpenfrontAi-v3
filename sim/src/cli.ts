@@ -14,6 +14,7 @@ import { layoutJson } from "./obs/Layout";
 import { BridgeServer } from "./bridge/Server";
 import { Sampler } from "./replay/Sampler";
 import { makeEnvHost } from "./env/EnvHost";
+import { envStepCost, replayStepCost } from "./bench/StepCost";
 import { LAYOUT_VERSION, SIM_VERSION } from "./version";
 
 class UsageError extends Error {}
@@ -113,6 +114,15 @@ async function main(argv: string[]): Promise<number> {
       fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
       writeRecord(file, rec);
       out({ path: file, gameId: rec.info.gameID, turns: rec.info.num_turns, ms: Math.round(performance.now() - t0) });
+      return 0;
+    }
+    case "step-cost": {
+      // step-cost [--maps Onion,Sol,...] [--minutes 5] [--seats 6] [--records a.json.gz,b.json.gz] --engine-root <dir>
+      const root = engineRoot(flags);
+      const maps = (flags.maps ?? "Onion,Sol,Las Vegas Strip,World").split(",");
+      const seats = Number(flags.seats ?? 6);
+      for (const map of maps) out(await envStepCost(root, map, seats, Number(flags.minutes ?? 5)));
+      for (const file of (flags.records ?? "").split(",").filter(Boolean)) out({ ...(await replayStepCost(root, file, seats)), path: file });
       return 0;
     }
     case "serve": {

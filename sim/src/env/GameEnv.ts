@@ -85,6 +85,8 @@ export class GameEnv {
   /** Path of the record written when the last game ended (if any). */
   lastRecord: string | null = null;
   lastError: string | null = null;
+  /** Wall time spent per part (M2 step-cost table). */
+  readonly timing = { tickMs: 0, ticks: 0, cacheMs: 0, encodeMs: 0, encodes: 0 };
 
   constructor(
     readonly engineRoot: string,
@@ -150,12 +152,15 @@ export class GameEnv {
         break;
       }
       let out;
+      const t0 = performance.now();
       try {
         out = g.tick(parsed.turn);
       } catch (e) {
         error = `engine threw: ${e instanceof Error ? e.message : String(e)}`;
         break;
       }
+      this.timing.tickMs += performance.now() - t0;
+      this.timing.ticks++;
       if (!out.ok) {
         error = out.error ?? "tick failed";
         break;
@@ -232,7 +237,10 @@ export class GameEnv {
 
   private encode(buf: ObsBuffer, rowBase: number): void {
     const g = this.g!;
+    const t0 = performance.now();
     this.cache!.update();
+    const t1 = performance.now();
+    this.timing.cacheMs += t1 - t0;
     this.tables = [];
     for (let i = 0; i < this.maxSeats; i++) {
       const seat = this.seats[i];
@@ -242,7 +250,9 @@ export class GameEnv {
         continue;
       }
       this.tables.push(encodeSeat(this.cache!, g, seat.clientID, buf, rowBase + i));
+      this.timing.encodes++;
     }
+    this.timing.encodeMs += performance.now() - t1;
   }
 
   private finish(): void {

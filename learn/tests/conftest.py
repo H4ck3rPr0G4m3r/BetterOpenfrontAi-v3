@@ -4,24 +4,37 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from ofai import paths
 
-# The sim straight from TypeScript: `node --import tsx src/cli.ts ...` in sim/.
-SIM_CMD = ["node", "--import", "tsx", "src/cli.ts"]
 SMALL_MAP = "Onion"
+_BUNDLE: list[Path] = []
+
+
+def sim_cmd() -> list[str]:
+    """The sim from the current sources, bundled with esbuild against the pinned engine.
+
+    Not tsx: tsx ignores `useDefineForClassFields: false`, which the engine
+    relies on (field initializers that read constructor parameters)."""
+    if not _BUNDLE:
+        out = Path(tempfile.mkdtemp(prefix="ofai-sim-")) / "sim.mjs"
+        subprocess.run(["node", str(paths.SIM / "scripts" / "bundle.mjs"), "--engine-root", str(paths.ENGINE),
+                        "--out", str(out)], cwd=paths.SIM, check=True, capture_output=True, timeout=300)
+        _BUNDLE.append(out)
+    return ["node", str(_BUNDLE[0])]
 
 
 def run_sim_src(*args: str, timeout: float = 600) -> list[dict]:
-    out = subprocess.run(SIM_CMD + list(args), cwd=paths.SIM, capture_output=True, timeout=timeout, check=True)
+    out = subprocess.run(sim_cmd() + list(args), capture_output=True, timeout=timeout, check=True)
     return [json.loads(line) for line in out.stdout.decode().splitlines() if line.strip().startswith("{")]
 
 
 def pool_kwargs() -> dict:
-    return {"command": SIM_CMD, "cwd": paths.SIM, "engine_root": paths.ENGINE}
+    return {"command": sim_cmd(), "engine_root": paths.ENGINE}
 
 
 @pytest.fixture(scope="session")
