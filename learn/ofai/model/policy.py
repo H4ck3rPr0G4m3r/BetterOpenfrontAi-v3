@@ -323,7 +323,7 @@ class Policy(nn.Module):
         ent = torch.zeros(n, device=dev)
         prev = torch.zeros(n, self.cfg.width, device=dev)
         alive = torch.ones(n, dtype=torch.bool, device=dev)
-        info: dict = {"rescued": torch.zeros((), device=dev), "logits": []}
+        info: dict = {"rescued": torch.zeros((), device=dev), "logits": [], "near": [], "far": [], "type_mask": m["type"]}
 
         def acc(rows: torch.Tensor, chosen: torch.Tensor, entropy: torch.Tensor, rescued: torch.Tensor) -> None:
             lp.index_add_(0, rows, chosen)
@@ -372,14 +372,19 @@ class Policy(nn.Module):
                     win = a[near, f["window"]].clamp(min=0)
                     sub = ctx.rows(near)
                     cm = self._loc_hint(sub, t[near], a[near, f["build"]], "win")[torch.arange(near.numel(), device=dev), win]
-                    acc(near, *log_prob_of(self._cell_logits(q4, sub, win), cm, a[near, f["cell"]]))
+                    cl = self._cell_logits(q4, sub, win)
+                    acc(near, *log_prob_of(cl, cm, a[near, f["cell"]]))
+                    info["near"].append((near, win, cl.detach().masked_fill(~cm, -1e9).argmax(-1), a[near, f["cell"]]))
                 if far.numel():
                     q4 = q3[far] + self.loc_emb.weight[2]
                     sub = ctx.rows(far)
                     hint = self._loc_hint(sub, t[far], a[far, f["build"]], "mm")
-                    acc(far, *log_prob_of(self._mm_logits(q4, sub), hint, a[far, f["mmCell"]]))
+                    ml = self._mm_logits(q4, sub)
+                    acc(far, *log_prob_of(ml, hint, a[far, f["mmCell"]]))
                     fl = self._fine_logits(q4, sub, a[far, f["mmCell"]])
                     acc(far, *log_prob_of(fl, torch.ones_like(fl, dtype=torch.bool), a[far, f["fine"]]))
+                    info["far"].append((far, ml.detach().masked_fill(~hint, -1e9).argmax(-1), fl.detach().argmax(-1),
+                                        a[far, f["mmCell"]], a[far, f["fine"]]))
             prev = prev + self._embed_action(ctx, a) * active.float().unsqueeze(-1)
             alive = active & (t != self.t_stop)
         return lp, ent, info

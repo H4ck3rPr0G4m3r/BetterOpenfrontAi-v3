@@ -88,3 +88,13 @@ def synth_dump(tmp_path_factory):
     run_sim_src("synth", str(rec), "--map", SMALL_MAP, "--seats", "4", "--turns", "1500", "--seed", "planes",
                 "--nations", "default", "--bots", "30", "--engine-root", str(paths.ENGINE))
     return dump_obs(rec, d / "out", steps=3, every=90)
+
+
+def tiny_config(**kw):
+    """A small model for fast tests (same structure as the real one)."""
+    from ofai.model.config import ModelConfig
+
+    base = dict(width=64, lstm=64, fusion_layers=1, player_layers=1, heads=4, cnn_channels=(16, 16, 16),
+                win_channels=(16, 16), ff_mult=2, ptr_dim=16, fine_dim=4, blocks_per_stage=1, amp=False)
+    base.update(kw)
+    return ModelConfig(**base)
